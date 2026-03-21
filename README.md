@@ -130,7 +130,7 @@ TESTS/
 
 ---
 
-## � Local Settings Configuration
+## Local Settings Configuration
 
 Add the following to `FUNC/local.settings.json` (replace `Dataverse:Url` with your actual Dataverse organization URL):
 
