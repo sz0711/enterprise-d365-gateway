@@ -61,6 +61,20 @@ public class ErrorClassifierTests
     }
 
     [Fact]
+    public void Classify_InvalidOperationExceptionResponseIsEmpty_ReturnsTransient()
+    {
+        _sut.Classify(new InvalidOperationException("The Dataverse response is empty."))
+            .Should().Be(ErrorCategory.Transient);
+    }
+
+    [Fact]
+    public void Classify_InvalidOperationExceptionThrowIfResponseIsEmpty_ReturnsTransient()
+    {
+        _sut.Classify(new InvalidOperationException("ServiceClient.ThrowIfResponseIsEmpty failed."))
+            .Should().Be(ErrorCategory.Transient);
+    }
+
+    [Fact]
     public void Classify_AggregateExceptionWithTimeout_ReturnsTransient()
     {
         var ex = new AggregateException(new TimeoutException());

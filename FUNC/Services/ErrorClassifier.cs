@@ -18,6 +18,10 @@ namespace enterprise_d365_gateway.Services
                 TimeoutRejectedException => ErrorCategory.Transient,
                 BrokenCircuitException => ErrorCategory.Transient,
                 HttpRequestException => ErrorCategory.Transient,
+                InvalidOperationException ex
+                    when ex.Message.Contains("response is empty", StringComparison.OrdinalIgnoreCase)
+                        || ex.Message.Contains("ThrowIfResponseIsEmpty", StringComparison.OrdinalIgnoreCase)
+                    => ErrorCategory.Transient,
                 InvalidOperationException ex when ex.Message.Contains("Rate limit", StringComparison.OrdinalIgnoreCase)
                     => ErrorCategory.Throttling,
                 AggregateException agg when agg.InnerException is TimeoutException

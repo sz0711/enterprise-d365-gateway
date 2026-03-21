@@ -41,6 +41,9 @@ namespace enterprise_d365_gateway.Services
                         .Handle<TimeoutException>()
                         .Handle<HttpRequestException>()
                         .Handle<TimeoutRejectedException>()
+                        .Handle<InvalidOperationException>(ex =>
+                            ex.Message.Contains("response is empty", StringComparison.OrdinalIgnoreCase)
+                            || ex.Message.Contains("ThrowIfResponseIsEmpty", StringComparison.OrdinalIgnoreCase))
                         .Handle<AggregateException>(ex =>
                             ex.InnerException is TimeoutException or HttpRequestException),
                     OnRetry = args =>
@@ -62,7 +65,10 @@ namespace enterprise_d365_gateway.Services
                     ShouldHandle = new PredicateBuilder()
                         .Handle<TimeoutException>()
                         .Handle<HttpRequestException>()
-                        .Handle<TimeoutRejectedException>(),
+                        .Handle<TimeoutRejectedException>()
+                        .Handle<InvalidOperationException>(ex =>
+                            ex.Message.Contains("response is empty", StringComparison.OrdinalIgnoreCase)
+                            || ex.Message.Contains("ThrowIfResponseIsEmpty", StringComparison.OrdinalIgnoreCase)),
                     OnOpened = args =>
                     {
                         _logger.LogError(

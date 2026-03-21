@@ -72,7 +72,22 @@ namespace enterprise_d365_gateway.Services
                         DataverseValueNormalizer.Normalize(keyAttr.Value));
                 }
 
-                var results = await _executor.RetrieveMultipleAsync(query, cancellationToken);
+                EntityCollection results;
+                try
+                {
+                    results = await _executor.RetrieveMultipleAsync(query, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Lookup query failed for attribute {Attribute}, entity {Entity}, signature {Signature}, depth {Depth}",
+                        attributeName,
+                        lookupDef.EntityLogicalName,
+                        cycleKey,
+                        currentDepth);
+                    throw;
+                }
 
                 if (results.Entities.Count > 1)
                 {
