@@ -58,7 +58,20 @@ namespace enterprise_d365_gateway.Services
                     DataverseValueNormalizer.Normalize(keyAttribute.Value));
             }
 
-            var results = await _executor.RetrieveMultipleAsync(query, cancellationToken);
+            EntityCollection results;
+            try
+            {
+                results = await _executor.RetrieveMultipleAsync(query, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "KeyAttributes query failed for entity {Entity}, signature {Signature}",
+                    entityLogicalName,
+                    keySignature);
+                throw;
+            }
 
             if (results.Entities.Count > 1)
             {
