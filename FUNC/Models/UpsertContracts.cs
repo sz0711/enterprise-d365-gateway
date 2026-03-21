@@ -3,12 +3,10 @@ namespace enterprise_d365_gateway.Models
     public class UpsertPayload
     {
         public required string EntityLogicalName { get; set; }
-        public string? UpsertKey { get; set; }
+        public required IDictionary<string, object?> KeyAttributes { get; set; }
         public Guid? Id { get; set; }
         public required IDictionary<string, object?> Attributes { get; set; }
         public string? SourceSystem { get; set; }
-        public string? ExternalIdAttribute { get; set; }
-        public object? ExternalIdValue { get; set; }
         public IDictionary<string, LookupDefinition>? Lookups { get; set; }
         public int? MaxLookupDepth { get; set; }
     }
@@ -16,8 +14,7 @@ namespace enterprise_d365_gateway.Models
     public class LookupDefinition
     {
         public required string EntityLogicalName { get; set; }
-        public string? UpsertKey { get; set; }
-        public required IDictionary<string, object?> AlternateKeyAttributes { get; set; }
+        public required IDictionary<string, object?> KeyAttributes { get; set; }
         public bool CreateIfNotExists { get; set; }
         public IDictionary<string, object?>? CreateAttributes { get; set; }
         public IDictionary<string, LookupDefinition>? NestedLookups { get; set; }

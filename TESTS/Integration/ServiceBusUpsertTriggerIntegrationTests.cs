@@ -37,7 +37,7 @@ public class ServiceBusUpsertTriggerIntegrationTests
             .Setup(s => s.UpsertBatchAsync(It.IsAny<IEnumerable<UpsertPayload>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(results);
 
-        var message = """{"Payloads":[{"EntityLogicalName":"account","UpsertKey":"ACC-001","Attributes":{"name":"Test"}}]}""";
+        var message = """{"Payloads":[{"EntityLogicalName":"account","KeyAttributes":{"accountnumber":"ACC-001"},"Attributes":{"name":"Test"}}]}""";
 
         await _sut.RunAsync(message, _contextMock.Object);
 
@@ -82,7 +82,7 @@ public class ServiceBusUpsertTriggerIntegrationTests
             .Setup(s => s.UpsertBatchAsync(It.IsAny<IEnumerable<UpsertPayload>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(results);
 
-        var message = """{"Payloads":[{"EntityLogicalName":"account","UpsertKey":"ACC-001","Attributes":{"name":"Test"}}]}""";
+        var message = """{"Payloads":[{"EntityLogicalName":"account","KeyAttributes":{"accountnumber":"ACC-001"},"Attributes":{"name":"Test"}}]}""";
 
         var act = async () => await _sut.RunAsync(message, _contextMock.Object);
 
@@ -101,7 +101,7 @@ public class ServiceBusUpsertTriggerIntegrationTests
             .Setup(s => s.UpsertBatchAsync(It.IsAny<IEnumerable<UpsertPayload>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(results);
 
-        var message = """{"Payloads":[{"EntityLogicalName":"account","UpsertKey":"ACC-001","Attributes":{"name":"Test"}}]}""";
+        var message = """{"Payloads":[{"EntityLogicalName":"account","KeyAttributes":{"accountnumber":"ACC-001"},"Attributes":{"name":"Test"}}]}""";
 
         // Should not throw — validation-only failures are logged as warnings
         await _sut.RunAsync(message, _contextMock.Object);

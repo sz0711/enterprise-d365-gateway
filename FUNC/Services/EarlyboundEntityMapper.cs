@@ -62,15 +62,20 @@ namespace enterprise_d365_gateway.Services
                 entity[attributeName] = ConvertToExpectedType(kvp.Value, expectedType, attributeName);
             }
 
-            if (!string.IsNullOrWhiteSpace(payload.ExternalIdAttribute) && payload.ExternalIdValue is not null)
+            if (payload.KeyAttributes != null)
             {
-                if (!payload.Attributes.ContainsKey(payload.ExternalIdAttribute))
+                foreach (var keyAttribute in payload.KeyAttributes)
                 {
-                    var expectedType = attributeTypeMap[payload.ExternalIdAttribute];
-                    entity[payload.ExternalIdAttribute] = ConvertToExpectedType(
-                        payload.ExternalIdValue,
+                    if (payload.Attributes.ContainsKey(keyAttribute.Key))
+                    {
+                        continue;
+                    }
+
+                    var expectedType = attributeTypeMap[keyAttribute.Key];
+                    entity[keyAttribute.Key] = ConvertToExpectedType(
+                        keyAttribute.Value,
                         expectedType,
-                        payload.ExternalIdAttribute);
+                        keyAttribute.Key);
                 }
             }
 
@@ -118,25 +123,33 @@ namespace enterprise_d365_gateway.Services
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(payload.ExternalIdAttribute))
+            if (payload.KeyAttributes == null || payload.KeyAttributes.Count == 0)
             {
-                if (!attributeTypeMap.TryGetValue(payload.ExternalIdAttribute, out var externalIdType))
-                {
-                    validationErrors.Add(
-                        $"ExternalIdAttribute '{payload.ExternalIdAttribute}' is not defined on entity '{payload.EntityLogicalName}'.");
-                }
-                else if (payload.ExternalIdValue is not null && !IsValueCompatible(externalIdType, payload.ExternalIdValue))
-                {
-                    validationErrors.Add(
-                        $"ExternalIdAttribute '{payload.ExternalIdAttribute}' has invalid type. Expected '{GetFriendlyTypeName(externalIdType)}'.");
-                }
+                validationErrors.Add("KeyAttributes must contain at least one entry.");
             }
-
-            if (!string.IsNullOrWhiteSpace(payload.ExternalIdAttribute)
-                && payload.Attributes.ContainsKey(payload.ExternalIdAttribute))
+            else
             {
-                validationErrors.Add(
-                    $"ExternalIdAttribute '{payload.ExternalIdAttribute}' must not also be present in Attributes.");
+                foreach (var keyAttribute in payload.KeyAttributes)
+                {
+                    if (!attributeTypeMap.TryGetValue(keyAttribute.Key, out var keyType))
+                    {
+                        validationErrors.Add(
+                            $"KeyAttribute '{keyAttribute.Key}' is not defined on entity '{payload.EntityLogicalName}'.");
+                        continue;
+                    }
+
+                    if (!IsValueCompatible(keyType, keyAttribute.Value))
+                    {
+                        validationErrors.Add(
+                            $"KeyAttribute '{keyAttribute.Key}' has invalid type. Expected '{GetFriendlyTypeName(keyType)}'.");
+                    }
+
+                    if (payload.Attributes.ContainsKey(keyAttribute.Key))
+                    {
+                        validationErrors.Add(
+                            $"KeyAttribute '{keyAttribute.Key}' must not also be present in Attributes.");
+                    }
+                }
             }
 
             if (validationErrors.Count > 0)

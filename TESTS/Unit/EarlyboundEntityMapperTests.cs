@@ -51,7 +51,7 @@ public class EarlyboundEntityMapperTests
     }
 
     [Fact]
-    public void ValidatePayload_ExternalIdAttributeNotOnEntity_ThrowsError()
+    public void ValidatePayload_KeyAttributeNotOnEntity_ThrowsError()
     {
         var payload = new TestPayloadBuilder()
             .WithEntity("account")
@@ -62,11 +62,11 @@ public class EarlyboundEntityMapperTests
         var act = () => _sut.ValidatePayload(payload);
 
         act.Should().Throw<PayloadValidationException>()
-            .Which.ValidationErrors.Should().Contain(e => e.Contains("ExternalIdAttribute"));
+            .Which.ValidationErrors.Should().Contain(e => e.Contains("KeyAttribute"));
     }
 
     [Fact]
-    public void ValidatePayload_ExternalIdAlsoInAttributes_ThrowsError()
+    public void ValidatePayload_KeyAttributeAlsoInAttributes_ThrowsError()
     {
         var payload = new TestPayloadBuilder()
             .WithEntity("account")
@@ -126,7 +126,7 @@ public class EarlyboundEntityMapperTests
     }
 
     [Fact]
-    public void MapToEntity_ExternalIdNotInAttributes_SetsOnEntity()
+    public void MapToEntity_KeyAttributeNotInAttributes_SetsOnEntity()
     {
         var payload = new TestPayloadBuilder()
             .WithEntity("account")

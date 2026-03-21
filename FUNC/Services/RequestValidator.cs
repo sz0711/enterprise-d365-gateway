@@ -38,8 +38,8 @@ namespace enterprise_d365_gateway.Services
 
             var errors = new List<string>();
 
-            if (string.IsNullOrWhiteSpace(payload.UpsertKey))
-                errors.Add("UpsertKey is required for the main entity.");
+            if (payload.KeyAttributes == null || payload.KeyAttributes.Count == 0)
+                errors.Add("KeyAttributes must contain at least one entry for the main entity.");
 
             if (string.IsNullOrWhiteSpace(payload.EntityLogicalName))
                 errors.Add("EntityLogicalName is required.");
@@ -65,14 +65,11 @@ namespace enterprise_d365_gateway.Services
             {
                 var currentPath = $"{path}.{key}";
 
-                if (string.IsNullOrWhiteSpace(lookup.UpsertKey))
-                    errors.Add($"{currentPath}: UpsertKey is required for every lookup.");
-
                 if (string.IsNullOrWhiteSpace(lookup.EntityLogicalName))
                     errors.Add($"{currentPath}: EntityLogicalName is required.");
 
-                if (lookup.AlternateKeyAttributes == null || lookup.AlternateKeyAttributes.Count == 0)
-                    errors.Add($"{currentPath}: AlternateKeyAttributes must contain at least one entry.");
+                if (lookup.KeyAttributes == null || lookup.KeyAttributes.Count == 0)
+                    errors.Add($"{currentPath}: KeyAttributes must contain at least one entry.");
 
                 if (lookup.NestedLookups != null && lookup.NestedLookups.Count > 0)
                     ValidateLookupsRecursive(lookup.NestedLookups, errors, currentPath);

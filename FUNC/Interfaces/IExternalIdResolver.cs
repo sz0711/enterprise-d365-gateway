@@ -4,10 +4,9 @@ namespace enterprise_d365_gateway.Interfaces
     {
         Task<Guid?> ResolveAsync(
             string entityLogicalName,
-            string externalIdAttribute,
-            object externalIdValue,
+            IDictionary<string, object?> keyAttributes,
             CancellationToken cancellationToken = default);
 
-        void Invalidate(string entityLogicalName, string externalIdAttribute, string externalIdValue);
+        void Invalidate(string entityLogicalName, IDictionary<string, object?> keyAttributes);
     }
 }

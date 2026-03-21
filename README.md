@@ -9,11 +9,11 @@
 | Feature | Status | Details |
 |---|---|---|
 | 🔀 SOLID Architecture | ✅ Done | 7 interfaces, 9 services, `UpsertOrchestrator` pipeline |
-| 📝 Contracts | ✅ Done | `UpsertKey`, `ErrorCategory`, `NestedLookups`, `LookupTraces` |
+| 📝 Contracts | ✅ Done | `KeyAttributes`, `ErrorCategory`, `NestedLookups`, `LookupTraces` |
 | 🔍 Recursive Lookup Resolution | ✅ Done | Cycle detection, configurable depth, `CreateIfNotExists` |
 | 🧠 In-Memory Cache | ✅ Done | `IMemoryCache` with sliding/absolute TTL, RAM-based `SizeLimit` |
 | 🛡️ Polly v8 Resilience | ✅ Done | Retry → CircuitBreaker → Timeout pipeline |
-| 🔒 Keyed Concurrency | ✅ Done | `SemaphoreSlim(1,1)` per normalized `UpsertKey` |
+| 🔒 Keyed Concurrency | ✅ Done | `SemaphoreSlim(1,1)` per normalized `KeyAttributes` signature |
 | ⚡ Rate Limiting | ✅ Done | Token bucket per Dataverse API call |
 | 🚫 Plugin Step Bypass | ✅ Done | `BypassBusinessLogicExecutionStepIds` per entity |
 | 🌐 HTTP Trigger | ✅ Done | `POST /api/upsert` with batch support |
@@ -34,8 +34,8 @@ This repository implements:
 - 📨 **Service Bus trigger** (`DataverseUpsertServiceBus`) - reliable queue-driven UPSERT processing
 - 🔀 **SOLID-decomposed pipeline** - clearly separated responsibilities (validation → lookup → execution → classification)
 - 🔍 **Recursive lookup resolution** - configurable max depth, cycle detection, per-lookup `CreateIfNotExists`
-- 🧠 **ExternalId→Guid in-memory cache** - per instance with sliding/absolute TTL and RAM-based size limits
-- 🔒 **Keyed concurrency control** per `UpsertKey` - identical keys serialized, distinct keys parallel
+- 🧠 **KeyAttributes→Guid in-memory cache** - per instance with sliding/absolute TTL and RAM-based size limits
+- 🔒 **Keyed concurrency control** per `KeyAttributes` signature - identical keys serialized, distinct keys parallel
 - 🛡️ **Polly v8 resilience pipeline** - retry with exponential backoff + jitter, circuit breaker, per-operation timeout
 - 🏷️ **Structured error classification** - Validation, Transient, Permanent, Throttling, Cancellation with per-payload detail
 - 🔗 **Dataverse upsert orchestration** via `IOrganizationServiceAsync2` and `Microsoft.PowerPlatform.Dataverse.Client`
@@ -62,12 +62,12 @@ This repository implements:
 
 | Icon | Interface | Responsibility |
 |---|---|---|
-| 📝 | `IRequestValidator` | Payload + structural validation (UpsertKey, types, nested lookups) |
+| 📝 | `IRequestValidator` | Payload + structural validation (KeyAttributes, types, nested lookups) |
 | 🏷️ | `IEarlyboundEntityMapper` | Entity mapping from JSON to SDK Entity via MODEL reflection |
-| 🧠 | `IExternalIdResolver` | ExternalId→Guid resolution with cache-first, invalidation on failure |
+| 🧠 | `IExternalIdResolver` | KeyAttributes→Guid resolution with cache-first, invalidation on failure |
 | 🔍 | `ILookupResolver` | Recursive lookup resolution with cycle detection + depth limits |
 | ⚡ | `IEntityUpsertExecutor` | Dataverse Create/Update/Query wrapped in Polly v8 resilience + rate limiter |
-| 🔒 | `IUpsertLockCoordinator` | Keyed `SemaphoreSlim(1,1)` per normalized UpsertKey |
+| 🔒 | `IUpsertLockCoordinator` | Keyed `SemaphoreSlim(1,1)` per normalized KeyAttributes signature |
 | 🚨 | `IErrorClassifier` | Exception → `ErrorCategory` mapping |
 | 📤 | `IResultMapper` | UpsertResult construction + batch HTTP status code determination |
 | 🎯 | `UpsertOrchestrator` | Thin pipeline coordinating all above services |
@@ -129,14 +129,14 @@ TESTS/
   "Payloads": [
     {
       "EntityLogicalName": "account",
-      "UpsertKey": "ERP-ACCT-1001",
+      "KeyAttributes": {
+        "accountnumber": "ACCT-1001"
+      },
       "Attributes": {
         "name": "Contoso",
         "description": "Enterprise gateway upsert"
       },
-      "SourceSystem": "ERP",
-      "ExternalIdAttribute": "accountnumber",
-      "ExternalIdValue": "ACCT-1001"
+      "SourceSystem": "ERP"
     }
   ]
 }
@@ -148,7 +148,9 @@ TESTS/
   "Payloads": [
     {
       "EntityLogicalName": "account",
-      "UpsertKey": "ERP-ACCT-1002",
+      "KeyAttributes": {
+        "accountnumber": "ACCT-1002"
+      },
       "Attributes": {
         "name": "Adventure Works",
         "address1_city": "Seattle"
@@ -156,8 +158,7 @@ TESTS/
       "Lookups": {
         "primarycontactid": {
           "EntityLogicalName": "contact",
-          "UpsertKey": "CONTACT-JOHN-DOE",
-          "AlternateKeyAttributes": {
+          "KeyAttributes": {
             "emailaddress1": "john.doe@example.com"
           },
           "CreateIfNotExists": true,
@@ -167,9 +168,7 @@ TESTS/
             "emailaddress1": "john.doe@example.com"
           }
         }
-      },
-      "ExternalIdAttribute": "accountnumber",
-      "ExternalIdValue": "ACCT-1002"
+      }
     }
   ]
 }
@@ -181,15 +180,16 @@ TESTS/
   "Payloads": [
     {
       "EntityLogicalName": "account",
-      "UpsertKey": "ERP-ACCT-2000",
+      "KeyAttributes": {
+        "accountnumber": "ACCT-2000"
+      },
       "Attributes": {
         "name": "Recursive Corp"
       },
       "Lookups": {
         "primarycontactid": {
           "EntityLogicalName": "contact",
-          "UpsertKey": "CONTACT-NESTED-1",
-          "AlternateKeyAttributes": {
+          "KeyAttributes": {
             "emailaddress1": "nested@example.com"
           },
           "CreateIfNotExists": true,
@@ -201,8 +201,7 @@ TESTS/
           "NestedLookups": {
             "accountid": {
               "EntityLogicalName": "account",
-              "UpsertKey": "PARENT-ACCT-100",
-              "AlternateKeyAttributes": {
+              "KeyAttributes": {
                 "accountnumber": "PARENT-100"
               },
               "CreateIfNotExists": true,
@@ -230,15 +229,14 @@ TESTS/
 
 ### 🔍 Lookup Resolution
 The `Lookups` property allows automatic resolution of entity references:
-- 🏷️ **UpsertKey**: Required identifier for concurrency control and tracing (free-form string, server-normalized).
-- 🔑 **AlternateKeyAttributes**: Key-value pairs for alternate key lookup.
+- 🔑 **KeyAttributes**: Required key-value pairs used for lookup, cache, and concurrency signature.
 - ➕ **CreateIfNotExists**: If `true`, creates the referenced entity if not found.
 - 📝 **CreateAttributes**: Attributes used when creating the referenced entity.
 - 🔄 **NestedLookups**: Recursive lookup definitions resolved *before* the parent entity is created.
 - 📏 **MaxDepth**: Optional per-lookup override for maximum recursion depth.
 
 Resolution order:
-1. 🔍 Query Dataverse by `AlternateKeyAttributes`.
+1. 🔍 Query Dataverse by `KeyAttributes`.
 2. ✅ If found → return `EntityReference`.
 3. ➕ If not found and `CreateIfNotExists` → resolve `NestedLookups` recursively → create entity → return `EntityReference`.
 4. ❌ If not found and `CreateIfNotExists` is `false` → fail with `Permanent` error.
@@ -256,7 +254,7 @@ Resolution order:
 | Value | Description | HTTP Mapping |
 |---|---|---|
 | `None` | Success | 200 |
-| `Validation` | Structural/type/UpsertKey errors | 400 |
+| `Validation` | Structural/type/KeyAttributes errors | 400 |
 | `Transient` | Timeout, network, circuit breaker | 500 |
 | `Permanent` | Dataverse rejection, unrecoverable | 500 |
 | `Throttling` | Rate limit exceeded | 500 |
@@ -268,7 +266,7 @@ Resolution order:
   "Id": "00000000-0000-0000-0000-000000000000",
   "Created": true,
   "EntityLogicalName": "account",
-  "UpsertKey": "ERP-ACCT-1001",
+  "UpsertKey": "account:accountnumber=ACCT-1001",
   "ErrorMessage": null,
   "ErrorCategory": "None",
   "ValidationErrors": null,
@@ -317,10 +315,10 @@ All Dataverse I/O (Create, Update, RetrieveMultiple) goes through a unified resi
 ---
 
 ## 🔒 Concurrency Control
-- 🏷️ `UpsertKey` is **required** for every main entity and every lookup/nested lookup.
-- ✂️ Normalized server-side: `Trim().ToUpperInvariant()`.
-- 🔀 Identical `UpsertKey` values are **serialized** (keyed `SemaphoreSlim(1,1)`), preventing race conditions on the same record.
-- 🚀 Different `UpsertKey` values run fully in parallel.
+- 🏷️ `KeyAttributes` is **required** for every main entity and every lookup/nested lookup.
+- ✂️ A deterministic signature is derived server-side: `{entity}:{sorted key=value pairs}`.
+- 🔀 Identical `KeyAttributes` signatures are **serialized** (keyed `SemaphoreSlim(1,1)`), preventing race conditions on the same record.
+- 🚀 Different `KeyAttributes` signatures run fully in parallel.
 - ℹ️ Identical payloads are NOT deduplicated - each is processed and serialized by key.
 
 ---
@@ -405,7 +403,7 @@ dotnet test TESTS/ --collect:"XPlat Code Coverage"
 
 ## 📡 Response Behavior
 - ✅ `200 OK`: all payloads processed successfully.
-- ⚠️ `400 Bad Request`: only validation failures (unknown attributes, type mismatch, missing UpsertKey).
+- ⚠️ `400 Bad Request`: only validation failures (unknown attributes, type mismatch, missing KeyAttributes).
 - ❌ `500 Internal Server Error`: at least one technical failure occurred.
 
 ℹ️ Failure details are always returned per payload with `ErrorCategory`, `ErrorMessage`, and `ValidationErrors`.
@@ -439,7 +437,7 @@ Parameters:
 - `IncludeNegativeTests`: Include invalid JSON/type error requests (default: false)
 - `ReportPath`: Optional JSON output path for detailed raw results
 
-The script generates random account data with `UpsertKey` and reports:
+The script generates random account data with `KeyAttributes` and reports:
 - Success/failure totals and throughput (requests/s, payloads/s)
 - Response time stats including p50/p95/p99
 - Status code distribution and sample errors
@@ -472,4 +470,4 @@ $reportPath = ".\reports\loadtest-$timestamp.json"
 ## 📝 Notes
 - 🚀 This design can scale to millions of requests, within Dataverse limits. Add a queue-throttling layer (Azure Front Door / API Management) for further protection.
 - 🧠 Cache is scoped per Function App instance - no distributed cache. Consider Redis if multi-instance consistency is critical.
-- ℹ️ All clients must include `UpsertKey` in payloads and lookups.
+- ℹ️ All clients must include `KeyAttributes` in payloads and lookups.

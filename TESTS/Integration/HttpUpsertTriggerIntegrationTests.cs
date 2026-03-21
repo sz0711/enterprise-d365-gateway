@@ -43,7 +43,7 @@ public class HttpUpsertTriggerIntegrationTests
             .Setup(m => m.DetermineBatchStatusCode(It.IsAny<IReadOnlyList<UpsertResult>>()))
             .Returns(HttpStatusCode.OK);
 
-        var json = """{"Payloads":[{"EntityLogicalName":"account","UpsertKey":"ACC-001","Attributes":{"name":"Test"}}]}""";
+        var json = """{"Payloads":[{"EntityLogicalName":"account","KeyAttributes":{"accountnumber":"ACC-001"},"Attributes":{"name":"Test"}}]}""";
         var req = CreateRequest(json);
 
         var response = await _sut.RunAsync(req);
@@ -89,7 +89,7 @@ public class HttpUpsertTriggerIntegrationTests
             .Setup(s => s.UpsertBatchAsync(It.IsAny<IEnumerable<UpsertPayload>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("Unexpected error"));
 
-        var json = """{"Payloads":[{"EntityLogicalName":"account","UpsertKey":"ACC-001","Attributes":{"name":"Test"}}]}""";
+        var json = """{"Payloads":[{"EntityLogicalName":"account","KeyAttributes":{"accountnumber":"ACC-001"},"Attributes":{"name":"Test"}}]}""";
         var req = CreateRequest(json);
 
         var response = await _sut.RunAsync(req);
@@ -111,7 +111,7 @@ public class HttpUpsertTriggerIntegrationTests
             .Setup(m => m.DetermineBatchStatusCode(It.IsAny<IReadOnlyList<UpsertResult>>()))
             .Returns(HttpStatusCode.OK);
 
-        var json = """{"Payloads":[{"EntityLogicalName":"account","UpsertKey":"ACC-001","Attributes":{"name":"Test"}}]}""";
+        var json = """{"Payloads":[{"EntityLogicalName":"account","KeyAttributes":{"accountnumber":"ACC-001"},"Attributes":{"name":"Test"}}]}""";
         var req = CreateRequest(json);
         req.Headers.Add("x-correlation-id", "test-correlation-123");
 

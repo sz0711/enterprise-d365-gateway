@@ -27,7 +27,6 @@ public class LookupResolverTests
 
     private static LookupDefinition MakeLookup(
         string entity = "contact",
-        string? upsertKey = null,
         bool createIfNotExists = false,
         IDictionary<string, object?>? altKeys = null,
         IDictionary<string, object?>? createAttrs = null,
@@ -37,9 +36,8 @@ public class LookupResolverTests
         return new LookupDefinition
         {
             EntityLogicalName = entity,
-            UpsertKey = upsertKey,
             CreateIfNotExists = createIfNotExists,
-            AlternateKeyAttributes = altKeys ?? new Dictionary<string, object?> { ["email"] = "test@example.com" },
+            KeyAttributes = altKeys ?? new Dictionary<string, object?> { ["email"] = "test@example.com" },
             CreateAttributes = createAttrs,
             NestedLookups = nestedLookups,
             MaxDepth = maxDepth
@@ -83,7 +81,7 @@ public class LookupResolverTests
     public async Task ResolveAsync_CycleDetected_Throws()
     {
         // Pre-populate visited with the key that will be generated
-        var visited = new HashSet<string> { "contact:" };
+        var visited = new HashSet<string> { "contact:email=test@example.com" };
 
         var lookup = MakeLookup();
 
@@ -194,7 +192,7 @@ public class LookupResolverTests
         await _sut.ResolveAsync("primarycontactid", lookup, 0, 3, visited);
 
         // The cycle key should be removed from visited after resolution (finally block)
-        visited.Should().NotContain("contact:");
+        visited.Should().NotContain("contact:email=test@example.com");
     }
 
     [Fact]

@@ -88,23 +88,16 @@ namespace enterprise_d365_gateway.Services
 
             // If failed with possible stale cache, invalidate and retry once
             if (result.ErrorCategory is ErrorCategory.Transient or ErrorCategory.Permanent
-                && !string.IsNullOrWhiteSpace(payload.ExternalIdAttribute)
-                && payload.ExternalIdValue != null)
+                && payload.KeyAttributes != null
+                && payload.KeyAttributes.Count > 0)
             {
-                var externalKey = payload.ExternalIdValue.ToString()?.Trim();
-                if (!string.IsNullOrWhiteSpace(externalKey))
-                {
-                    _externalIdResolver.Invalidate(
-                        payload.EntityLogicalName,
-                        payload.ExternalIdAttribute!,
-                        externalKey);
+                _externalIdResolver.Invalidate(payload.EntityLogicalName, payload.KeyAttributes);
 
-                    _logger.LogInformation(
-                        "Retrying upsert with invalidated cache for {Entity}:{Attribute}:{Key}",
-                        payload.EntityLogicalName, payload.ExternalIdAttribute, externalKey);
+                _logger.LogInformation(
+                    "Retrying upsert with invalidated cache for {Signature}",
+                    KeyAttributesFormatter.BuildSignature(payload.EntityLogicalName, payload.KeyAttributes));
 
-                    result = await ExecuteSingleAsync(payload, cancellationToken);
-                }
+                result = await ExecuteSingleAsync(payload, cancellationToken);
             }
 
             return result;
@@ -119,10 +112,10 @@ namespace enterprise_d365_gateway.Services
                 // 1. Validate
                 _validator.Validate(payload);
 
-                var normalizedKey = payload.UpsertKey?.Trim().ToUpperInvariant();
+                var keySignature = KeyAttributesFormatter.BuildSignature(payload.EntityLogicalName, payload.KeyAttributes);
 
                 // 2. Acquire keyed lock
-                using var lockHandle = await _lockCoordinator.AcquireAsync(normalizedKey!, cancellationToken);
+                using var lockHandle = await _lockCoordinator.AcquireAsync(keySignature, cancellationToken);
 
                 // 3. Map to entity
                 var entity = _mapper.MapToEntity(payload);
@@ -153,16 +146,14 @@ namespace enterprise_d365_gateway.Services
                     }
                 }
 
-                // 5. Resolve external ID
-                var externalKey = payload.ExternalIdValue?.ToString()?.Trim();
+                // 5. Resolve by key attributes
                 if (entity.Id == Guid.Empty
-                    && !string.IsNullOrWhiteSpace(payload.ExternalIdAttribute)
-                    && !string.IsNullOrWhiteSpace(externalKey))
+                    && payload.KeyAttributes != null
+                    && payload.KeyAttributes.Count > 0)
                 {
                     var existingId = await _externalIdResolver.ResolveAsync(
                         payload.EntityLogicalName,
-                        payload.ExternalIdAttribute,
-                        payload.ExternalIdValue!,
+                        payload.KeyAttributes,
                         cancellationToken);
 
                     if (existingId.HasValue)
@@ -187,20 +178,19 @@ namespace enterprise_d365_gateway.Services
                 }
 
                 // 7. Update cache after successful operation
-                if (!string.IsNullOrWhiteSpace(payload.ExternalIdAttribute)
-                    && !string.IsNullOrWhiteSpace(externalKey))
+                if (payload.KeyAttributes != null
+                    && payload.KeyAttributes.Count > 0)
                 {
                     await _cache.SetAsync(
                         payload.EntityLogicalName,
-                        payload.ExternalIdAttribute,
-                        externalKey,
+                        keySignature,
                         id,
                         cancellationToken);
                 }
 
                 return _resultMapper.MapSuccess(
                     payload.EntityLogicalName,
-                    payload.UpsertKey,
+                    keySignature,
                     id,
                     created,
                     lookupTraces.Count > 0 ? lookupTraces : null);
@@ -215,12 +205,20 @@ namespace enterprise_d365_gateway.Services
 
                 _logger.LogWarning(
                     ex,
-                    "Upsert failed for {Entity} (UpsertKey={UpsertKey}, Category={Category})",
-                    payload.EntityLogicalName, payload.UpsertKey, category);
+                    "Upsert failed for {Entity} (Category={Category})",
+                    payload.EntityLogicalName, category);
+
+                string? keySignature = null;
+                if (!string.IsNullOrWhiteSpace(payload.EntityLogicalName)
+                    && payload.KeyAttributes != null
+                    && payload.KeyAttributes.Count > 0)
+                {
+                    keySignature = KeyAttributesFormatter.BuildSignature(payload.EntityLogicalName, payload.KeyAttributes);
+                }
 
                 return _resultMapper.MapError(
                     payload.EntityLogicalName,
-                    payload.UpsertKey,
+                    keySignature,
                     ex,
                     category);
             }

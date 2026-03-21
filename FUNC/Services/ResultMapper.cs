@@ -8,7 +8,7 @@ namespace enterprise_d365_gateway.Services
     {
         public UpsertResult MapSuccess(
             string entityLogicalName,
-            string? upsertKey,
+            string? keySignature,
             Guid id,
             bool created,
             IList<LookupTrace>? lookupTraces = null)
@@ -16,7 +16,7 @@ namespace enterprise_d365_gateway.Services
             return new UpsertResult
             {
                 EntityLogicalName = entityLogicalName,
-                UpsertKey = upsertKey,
+                UpsertKey = keySignature,
                 Id = id,
                 Created = created,
                 ErrorCategory = ErrorCategory.None,
@@ -26,14 +26,14 @@ namespace enterprise_d365_gateway.Services
 
         public UpsertResult MapError(
             string entityLogicalName,
-            string? upsertKey,
+            string? keySignature,
             Exception exception,
             ErrorCategory category)
         {
             var result = new UpsertResult
             {
                 EntityLogicalName = entityLogicalName,
-                UpsertKey = upsertKey,
+                UpsertKey = keySignature,
                 Id = Guid.Empty,
                 Created = false,
                 ErrorCategory = category,

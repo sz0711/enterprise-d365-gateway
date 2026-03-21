@@ -93,7 +93,7 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var payload = new UpsertPayload
         {
             EntityLogicalName = "account",
-            UpsertKey = "EXT-001",
+            KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "EXT-001" },
             Attributes = new Dictionary<string, object?> { ["name"] = "Test Account" }
         };
 
@@ -123,7 +123,7 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var payload = new UpsertPayload
         {
             EntityLogicalName = "account",
-            UpsertKey = "EXT-001",
+            KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "EXT-001" },
             Id = existingId,
             Attributes = new Dictionary<string, object?> { ["name"] = "Updated Name" }
         };
@@ -153,9 +153,7 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var payload = new UpsertPayload
         {
             EntityLogicalName = "account",
-            UpsertKey = "EXT-001",
-            ExternalIdAttribute = "accountnumber",
-            ExternalIdValue = "EXT-001",
+            KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "EXT-001" },
             Attributes = new Dictionary<string, object?> { ["name"] = "Resolved Account" }
         };
 
@@ -180,15 +178,14 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var payload = new UpsertPayload
         {
             EntityLogicalName = "account",
-            UpsertKey = "ACC-001",
+            KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "ACC-001" },
             Attributes = new Dictionary<string, object?> { ["name"] = "Test Account" },
             Lookups = new Dictionary<string, LookupDefinition>
             {
                 ["primarycontactid"] = new LookupDefinition
                 {
                     EntityLogicalName = "contact",
-                    UpsertKey = "test@test.com",
-                    AlternateKeyAttributes = new Dictionary<string, object?> { ["emailaddress1"] = "test@test.com" }
+                    KeyAttributes = new Dictionary<string, object?> { ["emailaddress1"] = "test@test.com" }
                 }
             }
         };
@@ -207,15 +204,14 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var payload = new UpsertPayload
         {
             EntityLogicalName = "account",
-            UpsertKey = "ACC-001",
+            KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "ACC-001" },
             Attributes = new Dictionary<string, object?> { ["name"] = "Test Account" },
             Lookups = new Dictionary<string, LookupDefinition>
             {
                 ["primarycontactid"] = new LookupDefinition
                 {
                     EntityLogicalName = "contact",
-                    UpsertKey = "new@test.com",
-                    AlternateKeyAttributes = new Dictionary<string, object?> { ["emailaddress1"] = "new@test.com" },
+                    KeyAttributes = new Dictionary<string, object?> { ["emailaddress1"] = "new@test.com" },
                     CreateIfNotExists = true,
                     CreateAttributes = new Dictionary<string, object?> { ["firstname"] = "New", ["lastname"] = "Contact" }
                 }
@@ -240,7 +236,7 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var payload = new UpsertPayload
         {
             EntityLogicalName = "",
-            UpsertKey = "EXT-001",
+            KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "EXT-001" },
             Attributes = new Dictionary<string, object?> { ["name"] = "Test" }
         };
 
@@ -258,13 +254,13 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
             new UpsertPayload
             {
                 EntityLogicalName = "account",
-                UpsertKey = "ACC-001",
+                KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "ACC-001" },
                 Attributes = new Dictionary<string, object?> { ["name"] = "Account 1" }
             },
             new UpsertPayload
             {
                 EntityLogicalName = "account",
-                UpsertKey = "ACC-002",
+                KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "ACC-002" },
                 Attributes = new Dictionary<string, object?> { ["name"] = "Account 2" }
             }
         };
@@ -303,9 +299,7 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var payload = new UpsertPayload
         {
             EntityLogicalName = "account",
-            UpsertKey = "EXT-001",
-            ExternalIdAttribute = "accountnumber",
-            ExternalIdValue = "EXT-001",
+            KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "EXT-001" },
             Attributes = new Dictionary<string, object?> { ["name"] = "Cached Account" }
         };
 
@@ -319,3 +313,4 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         result2.Created.Should().BeFalse();
     }
 }
+

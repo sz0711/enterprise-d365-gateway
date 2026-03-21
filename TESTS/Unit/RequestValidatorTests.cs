@@ -38,14 +38,14 @@ public class RequestValidatorTests
     }
 
     [Fact]
-    public void Validate_EmptyUpsertKey_ThrowsValidationError()
+    public void Validate_EmptyKeyAttributes_ThrowsValidationError()
     {
         var payload = new TestPayloadBuilder().WithUpsertKey("").Build();
 
         var act = () => _sut.Validate(payload);
 
         act.Should().Throw<PayloadValidationException>()
-            .Which.ValidationErrors.Should().Contain(e => e.Contains("UpsertKey"));
+            .Which.ValidationErrors.Should().Contain(e => e.Contains("KeyAttributes"));
     }
 
     [Fact]
@@ -84,21 +84,20 @@ public class RequestValidatorTests
     }
 
     [Fact]
-    public void Validate_LookupMissingUpsertKey_ThrowsError()
+    public void Validate_LookupMissingKeyAttributes_ThrowsError()
     {
         var payload = new TestPayloadBuilder()
             .WithLookup("parentaccountid", new LookupDefinition
             {
                 EntityLogicalName = "account",
-                UpsertKey = "",
-                AlternateKeyAttributes = new Dictionary<string, object?> { ["name"] = "Parent" }
+                KeyAttributes = new Dictionary<string, object?>()
             })
             .Build();
 
         var act = () => _sut.Validate(payload);
 
         act.Should().Throw<PayloadValidationException>()
-            .Which.ValidationErrors.Should().Contain(e => e.Contains("UpsertKey"));
+            .Which.ValidationErrors.Should().Contain(e => e.Contains("KeyAttributes"));
     }
 
     [Fact]
@@ -108,8 +107,7 @@ public class RequestValidatorTests
             .WithLookup("parentaccountid", new LookupDefinition
             {
                 EntityLogicalName = "",
-                UpsertKey = "L-001",
-                AlternateKeyAttributes = new Dictionary<string, object?> { ["name"] = "Parent" }
+                KeyAttributes = new Dictionary<string, object?> { ["name"] = "Parent" }
             })
             .Build();
 
@@ -120,21 +118,20 @@ public class RequestValidatorTests
     }
 
     [Fact]
-    public void Validate_LookupEmptyAlternateKeyAttributes_ThrowsError()
+    public void Validate_LookupEmptyKeyAttributes_ThrowsError()
     {
         var payload = new TestPayloadBuilder()
             .WithLookup("parentaccountid", new LookupDefinition
             {
                 EntityLogicalName = "account",
-                UpsertKey = "L-001",
-                AlternateKeyAttributes = new Dictionary<string, object?>()
+                KeyAttributes = new Dictionary<string, object?>()
             })
             .Build();
 
         var act = () => _sut.Validate(payload);
 
         act.Should().Throw<PayloadValidationException>()
-            .Which.ValidationErrors.Should().Contain(e => e.Contains("AlternateKeyAttributes"));
+            .Which.ValidationErrors.Should().Contain(e => e.Contains("KeyAttributes"));
     }
 
     [Fact]
@@ -144,15 +141,13 @@ public class RequestValidatorTests
             .WithLookup("parentaccountid", new LookupDefinition
             {
                 EntityLogicalName = "account",
-                UpsertKey = "L-001",
-                AlternateKeyAttributes = new Dictionary<string, object?> { ["name"] = "Parent" },
+                KeyAttributes = new Dictionary<string, object?> { ["name"] = "Parent" },
                 NestedLookups = new Dictionary<string, LookupDefinition>
                 {
                     ["ownerid"] = new LookupDefinition
                     {
                         EntityLogicalName = "",
-                        UpsertKey = "",
-                        AlternateKeyAttributes = new Dictionary<string, object?>()
+                        KeyAttributes = new Dictionary<string, object?>()
                     }
                 }
             })
@@ -161,7 +156,7 @@ public class RequestValidatorTests
         var act = () => _sut.Validate(payload);
 
         act.Should().Throw<PayloadValidationException>()
-            .Which.ValidationErrors.Should().HaveCountGreaterOrEqualTo(3);
+            .Which.ValidationErrors.Should().HaveCountGreaterOrEqualTo(2);
     }
 
     [Fact]

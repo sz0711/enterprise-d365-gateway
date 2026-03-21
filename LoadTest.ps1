@@ -85,22 +85,21 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
             $randomName = $accountNames | Get-Random
             $randomCity = $cities | Get-Random
             $externalId = "EXT-{0:D6}" -f $Index
-            $upsertKey = "LT-T{0}-{1:D6}" -f $ThreadId, $Index
 
             # Sometimes add a lookup to contact
             $includeLookup = (Get-Random -Minimum 1 -Maximum 101) -le $LookupProbabilityPercent
 
             $payload = @{
                 EntityLogicalName = "account"
-                UpsertKey = $upsertKey
+                KeyAttributes = @{
+                    accountnumber = $externalId
+                }
                 Attributes = @{
                     name = "$randomName ($Index)"
                     address1_city = $randomCity
                     description = "Load test account created at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
                 }
                 SourceSystem = "LoadTest"
-                ExternalIdAttribute = "accountnumber"
-                ExternalIdValue = $externalId
             }
 
             if ($includeLookup) {
@@ -111,8 +110,7 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
                 $payload.Lookups = @{
                     primarycontactid = @{
                         EntityLogicalName = "contact"
-                        UpsertKey = "LT-CONTACT-$email"
-                        AlternateKeyAttributes = @{
+                        KeyAttributes = @{
                             emailaddress1 = $email
                         }
                         CreateIfNotExists = $true

@@ -5,8 +5,8 @@ namespace enterprise_d365_gateway.Interfaces
 {
     public interface IResultMapper
     {
-        UpsertResult MapSuccess(string entityLogicalName, string? upsertKey, Guid id, bool created, IList<LookupTrace>? lookupTraces = null);
-        UpsertResult MapError(string entityLogicalName, string? upsertKey, Exception exception, ErrorCategory category);
+        UpsertResult MapSuccess(string entityLogicalName, string? keySignature, Guid id, bool created, IList<LookupTrace>? lookupTraces = null);
+        UpsertResult MapError(string entityLogicalName, string? keySignature, Exception exception, ErrorCategory category);
         HttpStatusCode DetermineBatchStatusCode(IReadOnlyList<UpsertResult> results);
     }
 }

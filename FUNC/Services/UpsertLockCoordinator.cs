@@ -7,9 +7,9 @@ namespace enterprise_d365_gateway.Services
     {
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
 
-        public async Task<IDisposable> AcquireAsync(string upsertKey, CancellationToken cancellationToken = default)
+        public async Task<IDisposable> AcquireAsync(string keySignature, CancellationToken cancellationToken = default)
         {
-            var normalizedKey = NormalizeKey(upsertKey);
+            var normalizedKey = NormalizeKey(keySignature);
             var semaphore = _locks.GetOrAdd(normalizedKey, _ => new SemaphoreSlim(1, 1));
             await semaphore.WaitAsync(cancellationToken);
             return new LockRelease(semaphore);

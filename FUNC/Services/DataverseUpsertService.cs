@@ -142,18 +142,17 @@ namespace enterprise_d365_gateway.Services
                     }
                 }
 
-                var externalKey = payload.ExternalIdValue?.ToString()?.Trim();
                 if (entity.Id == Guid.Empty &&
-                    !string.IsNullOrWhiteSpace(payload.ExternalIdAttribute) &&
-                    !string.IsNullOrWhiteSpace(externalKey))
+                    payload.KeyAttributes != null &&
+                    payload.KeyAttributes.Count > 0)
                 {
+                    var keySignature = KeyAttributesFormatter.BuildSignature(payload.EntityLogicalName, payload.KeyAttributes);
                     var cachedId = await _entityMappingCache.GetAsync(
                         payload.EntityLogicalName,
-                        payload.ExternalIdAttribute,
-                        externalKey,
+                        keySignature,
                         cancellationToken);
 
-                    var existingId = cachedId ?? await TryFindExistingByExternalIdAsync(
+                    var existingId = cachedId ?? await TryFindExistingByKeyAttributesAsync(
                         payload,
                         service,
                         cancellationToken);
@@ -166,8 +165,7 @@ namespace enterprise_d365_gateway.Services
                         {
                             await _entityMappingCache.SetAsync(
                                 payload.EntityLogicalName,
-                                payload.ExternalIdAttribute,
-                                externalKey,
+                                keySignature,
                                 existingId.Value,
                                 cancellationToken);
                         }
@@ -193,18 +191,14 @@ namespace enterprise_d365_gateway.Services
                         created = true;
                     }
 
-                    if (!string.IsNullOrWhiteSpace(payload.ExternalIdAttribute) && payload.ExternalIdValue != null)
+                    if (payload.KeyAttributes != null && payload.KeyAttributes.Count > 0)
                     {
-                        var key = payload.ExternalIdValue.ToString()?.Trim();
-                        if (!string.IsNullOrWhiteSpace(key))
-                        {
-                            await _entityMappingCache.SetAsync(
-                                payload.EntityLogicalName,
-                                payload.ExternalIdAttribute,
-                                key,
-                                id,
-                                ct);
-                        }
+                        var keySignature = KeyAttributesFormatter.BuildSignature(payload.EntityLogicalName, payload.KeyAttributes);
+                        await _entityMappingCache.SetAsync(
+                            payload.EntityLogicalName,
+                            keySignature,
+                            id,
+                            ct);
                     }
 
                     return new UpsertResult
@@ -253,12 +247,12 @@ namespace enterprise_d365_gateway.Services
             }
         }
 
-        private async Task<Guid?> TryFindExistingByExternalIdAsync(
+        private async Task<Guid?> TryFindExistingByKeyAttributesAsync(
             UpsertPayload payload,
             IOrganizationServiceAsync2 service,
             CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(payload.ExternalIdAttribute) || payload.ExternalIdValue is null)
+            if (payload.KeyAttributes == null || payload.KeyAttributes.Count == 0)
             {
                 return null;
             }
@@ -270,17 +264,20 @@ namespace enterprise_d365_gateway.Services
                 Criteria = new FilterExpression(LogicalOperator.And)
             };
 
-            query.Criteria.AddCondition(
-                payload.ExternalIdAttribute,
-                ConditionOperator.Equal,
-                NormalizeDataverseValue(payload.ExternalIdValue));
+            foreach (var keyAttribute in payload.KeyAttributes)
+            {
+                query.Criteria.AddCondition(
+                    keyAttribute.Key,
+                    ConditionOperator.Equal,
+                    NormalizeDataverseValue(keyAttribute.Value));
+            }
 
             var existing = await service.RetrieveMultipleAsync(query, cancellationToken);
 
             if (existing.Entities.Count > 1)
             {
                 throw new InvalidOperationException(
-                    $"Multiple '{payload.EntityLogicalName}' records found for ExternalIdAttribute '{payload.ExternalIdAttribute}'.");
+                    $"Multiple '{payload.EntityLogicalName}' records found for provided KeyAttributes.");
             }
 
             return existing.Entities.FirstOrDefault()?.Id;
@@ -302,9 +299,9 @@ namespace enterprise_d365_gateway.Services
                 throw new InvalidOperationException($"Lookup definition for '{attributeName}' is missing EntityLogicalName.");
             }
 
-            if (lookupDef.AlternateKeyAttributes == null || lookupDef.AlternateKeyAttributes.Count == 0)
+            if (lookupDef.KeyAttributes == null || lookupDef.KeyAttributes.Count == 0)
             {
-                throw new InvalidOperationException($"Lookup definition for '{attributeName}' must contain AlternateKeyAttributes.");
+                throw new InvalidOperationException($"Lookup definition for '{attributeName}' must contain KeyAttributes.");
             }
 
             var query = new QueryExpression(lookupDef.EntityLogicalName)
@@ -314,7 +311,7 @@ namespace enterprise_d365_gateway.Services
                 Criteria = new FilterExpression(LogicalOperator.And)
             };
 
-            foreach (var keyAttribute in lookupDef.AlternateKeyAttributes)
+            foreach (var keyAttribute in lookupDef.KeyAttributes)
             {
                 query.Criteria.AddCondition(
                     keyAttribute.Key,
@@ -348,7 +345,7 @@ namespace enterprise_d365_gateway.Services
                     }
                 }
 
-                foreach (var keyAttribute in lookupDef.AlternateKeyAttributes)
+                foreach (var keyAttribute in lookupDef.KeyAttributes)
                 {
                     if (!newEntity.Attributes.ContainsKey(keyAttribute.Key))
                     {

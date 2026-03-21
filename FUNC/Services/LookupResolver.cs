@@ -40,7 +40,7 @@ namespace enterprise_d365_gateway.Services
             }
 
             // Cycle detection
-            var cycleKey = $"{lookupDef.EntityLogicalName}:{lookupDef.UpsertKey}";
+            var cycleKey = KeyAttributesFormatter.BuildSignature(lookupDef.EntityLogicalName, lookupDef.KeyAttributes);
             if (!visited.Add(cycleKey))
             {
                 throw new InvalidOperationException(
@@ -64,7 +64,7 @@ namespace enterprise_d365_gateway.Services
                     Criteria = new FilterExpression(LogicalOperator.And)
                 };
 
-                foreach (var keyAttr in lookupDef.AlternateKeyAttributes)
+                foreach (var keyAttr in lookupDef.KeyAttributes)
                 {
                     query.Criteria.AddCondition(
                         keyAttr.Key,
@@ -110,7 +110,7 @@ namespace enterprise_d365_gateway.Services
                     }
                 }
 
-                foreach (var keyAttr in lookupDef.AlternateKeyAttributes)
+                foreach (var keyAttr in lookupDef.KeyAttributes)
                 {
                     if (!newEntity.Attributes.ContainsKey(keyAttr.Key))
                     {

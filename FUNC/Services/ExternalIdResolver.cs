@@ -23,20 +23,23 @@ namespace enterprise_d365_gateway.Services
 
         public async Task<Guid?> ResolveAsync(
             string entityLogicalName,
-            string externalIdAttribute,
-            object externalIdValue,
+            IDictionary<string, object?> keyAttributes,
             CancellationToken cancellationToken = default)
         {
-            var normalizedKey = externalIdValue?.ToString()?.Trim();
-            if (string.IsNullOrWhiteSpace(normalizedKey)) return null;
+            if (keyAttributes == null || keyAttributes.Count == 0)
+            {
+                return null;
+            }
+
+            var keySignature = KeyAttributesFormatter.BuildSignature(entityLogicalName, keyAttributes);
 
             // Cache first
-            var cached = await _cache.GetAsync(entityLogicalName, externalIdAttribute, normalizedKey, cancellationToken);
+            var cached = await _cache.GetAsync(entityLogicalName, keySignature, cancellationToken);
             if (cached.HasValue)
             {
                 _logger.LogDebug(
-                    "ExternalId cache hit: {Entity}:{Attribute}:{Key} -> {Id}",
-                    entityLogicalName, externalIdAttribute, normalizedKey, cached.Value);
+                    "KeyAttributes cache hit: {Signature} -> {Id}",
+                    keySignature, cached.Value);
                 return cached.Value;
             }
 
@@ -47,41 +50,44 @@ namespace enterprise_d365_gateway.Services
                 TopCount = 2,
                 Criteria = new FilterExpression(LogicalOperator.And)
             };
-            query.Criteria.AddCondition(
-                externalIdAttribute,
-                ConditionOperator.Equal,
-                DataverseValueNormalizer.Normalize(externalIdValue));
+            foreach (var keyAttribute in keyAttributes)
+            {
+                query.Criteria.AddCondition(
+                    keyAttribute.Key,
+                    ConditionOperator.Equal,
+                    DataverseValueNormalizer.Normalize(keyAttribute.Value));
+            }
 
             var results = await _executor.RetrieveMultipleAsync(query, cancellationToken);
 
             if (results.Entities.Count > 1)
             {
                 throw new InvalidOperationException(
-                    $"Multiple '{entityLogicalName}' records found for ExternalIdAttribute '{externalIdAttribute}'.");
+                    $"Multiple '{entityLogicalName}' records found for KeyAttributes '{keySignature}'.");
             }
 
             var existingId = results.Entities.FirstOrDefault()?.Id;
             if (existingId.HasValue)
             {
-                await _cache.SetAsync(entityLogicalName, externalIdAttribute, normalizedKey, existingId.Value, cancellationToken);
+                await _cache.SetAsync(entityLogicalName, keySignature, existingId.Value, cancellationToken);
                 _logger.LogDebug(
-                    "ExternalId resolved from Dataverse: {Entity}:{Attribute}:{Key} -> {Id}",
-                    entityLogicalName, externalIdAttribute, normalizedKey, existingId.Value);
+                    "KeyAttributes resolved from Dataverse: {Signature} -> {Id}",
+                    keySignature, existingId.Value);
             }
 
             return existingId;
         }
 
-        public void Invalidate(string entityLogicalName, string externalIdAttribute, string externalIdValue)
+        public void Invalidate(string entityLogicalName, IDictionary<string, object?> keyAttributes)
         {
-            var normalizedKey = externalIdValue?.Trim();
-            if (!string.IsNullOrWhiteSpace(normalizedKey))
+            if (keyAttributes == null || keyAttributes.Count == 0)
             {
-                _cache.Remove(entityLogicalName, externalIdAttribute, normalizedKey);
-                _logger.LogInformation(
-                    "ExternalId cache invalidated: {Entity}:{Attribute}:{Key}",
-                    entityLogicalName, externalIdAttribute, normalizedKey);
+                return;
             }
+
+            var keySignature = KeyAttributesFormatter.BuildSignature(entityLogicalName, keyAttributes);
+            _cache.Remove(entityLogicalName, keySignature);
+            _logger.LogInformation("KeyAttributes cache invalidated: {Signature}", keySignature);
         }
     }
 }

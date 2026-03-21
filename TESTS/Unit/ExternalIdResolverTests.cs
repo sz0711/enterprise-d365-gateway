@@ -23,10 +23,12 @@ public class ExternalIdResolverTests
     public async Task ResolveAsync_CacheHit_ReturnsCachedGuidNoQuery()
     {
         var expectedId = Guid.NewGuid();
-        _cacheMock.Setup(c => c.GetAsync("account", "ext_id", "EXT-001", It.IsAny<CancellationToken>()))
+        _cacheMock.Setup(c => c.GetAsync("account", "account:ext_id=EXT-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedId);
 
-        var result = await _sut.ResolveAsync("account", "ext_id", "EXT-001");
+        var keyAttributes = new Dictionary<string, object?> { ["ext_id"] = "EXT-001" };
+
+        var result = await _sut.ResolveAsync("account", keyAttributes);
 
         result.Should().Be(expectedId);
         _executorMock.Verify(e => e.RetrieveMultipleAsync(It.IsAny<Microsoft.Xrm.Sdk.Query.QueryExpression>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -36,29 +38,33 @@ public class ExternalIdResolverTests
     public async Task ResolveAsync_CacheMiss_QueryReturnsOne_CachesAndReturns()
     {
         var expectedId = Guid.NewGuid();
-        _cacheMock.Setup(c => c.GetAsync("account", "ext_id", "EXT-001", It.IsAny<CancellationToken>()))
+        _cacheMock.Setup(c => c.GetAsync("account", "account:ext_id=EXT-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid?)null);
+
+        var keyAttributes = new Dictionary<string, object?> { ["ext_id"] = "EXT-001" };
 
         var collection = new EntityCollection();
         collection.Entities.Add(new Entity("account") { Id = expectedId });
         _executorMock.Setup(e => e.RetrieveMultipleAsync(It.IsAny<Microsoft.Xrm.Sdk.Query.QueryExpression>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(collection);
 
-        var result = await _sut.ResolveAsync("account", "ext_id", "EXT-001");
+        var result = await _sut.ResolveAsync("account", keyAttributes);
 
         result.Should().Be(expectedId);
-        _cacheMock.Verify(c => c.SetAsync("account", "ext_id", "EXT-001", expectedId, It.IsAny<CancellationToken>()), Times.Once);
+        _cacheMock.Verify(c => c.SetAsync("account", "account:ext_id=EXT-001", expectedId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task ResolveAsync_CacheMiss_QueryReturnsZero_ReturnsNull()
     {
-        _cacheMock.Setup(c => c.GetAsync("account", "ext_id", "EXT-001", It.IsAny<CancellationToken>()))
+        _cacheMock.Setup(c => c.GetAsync("account", "account:ext_id=EXT-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid?)null);
         _executorMock.Setup(e => e.RetrieveMultipleAsync(It.IsAny<Microsoft.Xrm.Sdk.Query.QueryExpression>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new EntityCollection());
 
-        var result = await _sut.ResolveAsync("account", "ext_id", "EXT-001");
+        var keyAttributes = new Dictionary<string, object?> { ["ext_id"] = "EXT-001" };
+
+        var result = await _sut.ResolveAsync("account", keyAttributes);
 
         result.Should().BeNull();
     }
@@ -66,8 +72,10 @@ public class ExternalIdResolverTests
     [Fact]
     public async Task ResolveAsync_CacheMiss_QueryReturnsMultiple_Throws()
     {
-        _cacheMock.Setup(c => c.GetAsync("account", "ext_id", "EXT-001", It.IsAny<CancellationToken>()))
+        _cacheMock.Setup(c => c.GetAsync("account", "account:ext_id=EXT-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid?)null);
+
+        var keyAttributes = new Dictionary<string, object?> { ["ext_id"] = "EXT-001" };
 
         var collection = new EntityCollection();
         collection.Entities.Add(new Entity("account") { Id = Guid.NewGuid() });
@@ -75,24 +83,24 @@ public class ExternalIdResolverTests
         _executorMock.Setup(e => e.RetrieveMultipleAsync(It.IsAny<Microsoft.Xrm.Sdk.Query.QueryExpression>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(collection);
 
-        var act = async () => await _sut.ResolveAsync("account", "ext_id", "EXT-001");
+        var act = async () => await _sut.ResolveAsync("account", keyAttributes);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*Multiple*");
     }
 
     [Fact]
-    public async Task ResolveAsync_NullExternalIdValue_ReturnsNull()
+    public async Task ResolveAsync_EmptyKeyAttributes_ReturnsNull()
     {
-        var result = await _sut.ResolveAsync("account", "ext_id", null!);
+        var result = await _sut.ResolveAsync("account", new Dictionary<string, object?>());
 
         result.Should().BeNull();
     }
 
     [Fact]
-    public async Task ResolveAsync_WhitespaceExternalIdValue_ReturnsNull()
+    public async Task ResolveAsync_NullKeyAttributes_ReturnsNull()
     {
-        var result = await _sut.ResolveAsync("account", "ext_id", "   ");
+        var result = await _sut.ResolveAsync("account", null!);
 
         result.Should().BeNull();
     }
@@ -100,9 +108,9 @@ public class ExternalIdResolverTests
     [Fact]
     public void Invalidate_CallsCacheRemove()
     {
-        _sut.Invalidate("account", "ext_id", "EXT-001");
+        _sut.Invalidate("account", new Dictionary<string, object?> { ["ext_id"] = "EXT-001" });
 
-        _cacheMock.Verify(c => c.Remove("account", "ext_id", "EXT-001"), Times.Once);
+        _cacheMock.Verify(c => c.Remove("account", "account:ext_id=EXT-001"), Times.Once);
     }
 
     [Fact]
@@ -111,12 +119,12 @@ public class ExternalIdResolverTests
         using var cts = new CancellationTokenSource();
         var token = cts.Token;
 
-        _cacheMock.Setup(c => c.GetAsync("account", "ext_id", "EXT-001", token))
+        _cacheMock.Setup(c => c.GetAsync("account", "account:ext_id=EXT-001", token))
             .ReturnsAsync((Guid?)null);
         _executorMock.Setup(e => e.RetrieveMultipleAsync(It.IsAny<Microsoft.Xrm.Sdk.Query.QueryExpression>(), token))
             .ReturnsAsync(new EntityCollection());
 
-        await _sut.ResolveAsync("account", "ext_id", "EXT-001", token);
+        await _sut.ResolveAsync("account", new Dictionary<string, object?> { ["ext_id"] = "EXT-001" }, token);
 
         _executorMock.Verify(e => e.RetrieveMultipleAsync(It.IsAny<Microsoft.Xrm.Sdk.Query.QueryExpression>(), token), Times.Once);
     }
