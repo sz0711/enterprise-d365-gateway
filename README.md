@@ -105,6 +105,7 @@ TESTS/
 | `Dataverse__MaxDegreeOfParallelism` | Parallel batch processing | `8` |
 | `Dataverse__MaxRetries` | Retry attempts per operation | `4` |
 | `Dataverse__RetryBaseDelayMs` | Base delay for exponential backoff | `200` |
+| `Dataverse__RateLimitRetryDelaySeconds` | Fixed cooldown for 429/rate-limit retries | `300` |
 | `Dataverse__TimeoutPerOperationSeconds` | Timeout per Dataverse call | `30` |
 | `Dataverse__CircuitBreakerFailureThreshold` | Min throughput before evaluating failures | `10` |
 | `Dataverse__CircuitBreakerSamplingDurationSeconds` | Sampling window for circuit breaker | `60` |
@@ -112,6 +113,8 @@ TESTS/
 | `Dataverse__CacheSlidingExpirationMinutes` | Cache sliding TTL (entry stays if accessed) | `120` (2h) |
 | `Dataverse__CacheAbsoluteExpirationMinutes` | Cache absolute TTL (hard upper bound) | `360` (6h) |
 | `Dataverse__CacheMemoryBudgetPercent` | % of available RAM for cache | `20` |
+| `Dataverse__CacheMemoryBudgetMinMb` | Hard lower bound for cache `SizeLimit` (MB) | `64` |
+| `Dataverse__CacheMemoryBudgetMaxMb` | Hard upper bound for cache `SizeLimit` (MB) | `512` |
 | `Dataverse__CacheEntrySizeBytes` | Estimated size per cache entry | `128` |
 | `Dataverse__MaxLookupDepth` | Global max recursive lookup depth | `3` |
 | `Dataverse__LookupTimeoutSeconds` | Timeout budget per lookup tree | `60` |
@@ -296,7 +299,7 @@ Resolution order:
 - 🎯 **Scope**: Per Function instance (in-process `IMemoryCache`, not distributed).
 - ⏱️ **Sliding Expiration**: 2h - entry stays alive as long as it’s accessed within this window.
 - ⏰ **Absolute Expiration**: 6h - hard upper bound regardless of access frequency.
-- 💾 **RAM Budget**: Cache `SizeLimit` is computed as `CacheMemoryBudgetPercent` of total available memory.
+- 💾 **RAM Budget**: Cache `SizeLimit` is computed from `CacheMemoryBudgetPercent` and then clamped between `CacheMemoryBudgetMinMb` and `CacheMemoryBudgetMaxMb`.
 - 📏 **Entry Size**: Each entry’s `Size` is set to `CacheEntrySizeBytes` (128 bytes default).
 - 🗑️ **Invalidation**: On upsert/resolve failure with a cached GUID, the cache key is evicted and a single fresh re-resolve is attempted.
 - 🚫 **No Distribution**: Cache is local per instance. No Redis or cross-instance synchronization.
@@ -353,7 +356,7 @@ Dataverse__BypassPluginStepIds__contact=a1b2c3d4-...
 
 ## 🧪 Testing
 
-**111 tests total** (88 unit + 23 integration), all passing.
+**113 tests total**, all passing.
 
 ```powershell
 # Run all tests

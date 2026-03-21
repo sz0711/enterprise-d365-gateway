@@ -37,15 +37,27 @@ namespace enterprise_d365_gateway.Services
                     BackoffType = DelayBackoffType.Exponential,
                     UseJitter = true,
                     Delay = TimeSpan.FromMilliseconds(opts.RetryBaseDelayMs),
+                    DelayGenerator = args =>
+                    {
+                        if (IsRateLimitException(args.Outcome.Exception))
+                        {
+                            return new ValueTask<TimeSpan?>(TimeSpan.FromSeconds(opts.RateLimitRetryDelaySeconds));
+                        }
+
+                        // null = use configured exponential backoff
+                        return new ValueTask<TimeSpan?>((TimeSpan?)null);
+                    },
                     ShouldHandle = new PredicateBuilder()
                         .Handle<TimeoutException>()
                         .Handle<HttpRequestException>()
                         .Handle<TimeoutRejectedException>()
                         .Handle<InvalidOperationException>(ex =>
                             ex.Message.Contains("response is empty", StringComparison.OrdinalIgnoreCase)
-                            || ex.Message.Contains("ThrowIfResponseIsEmpty", StringComparison.OrdinalIgnoreCase))
+                            || ex.Message.Contains("ThrowIfResponseIsEmpty", StringComparison.OrdinalIgnoreCase)
+                            || IsRateLimitException(ex))
                         .Handle<AggregateException>(ex =>
-                            ex.InnerException is TimeoutException or HttpRequestException),
+                            ex.InnerException is TimeoutException or HttpRequestException
+                            || IsRateLimitException(ex.InnerException)),
                     OnRetry = args =>
                     {
                         _logger.LogWarning(
@@ -68,7 +80,9 @@ namespace enterprise_d365_gateway.Services
                         .Handle<TimeoutRejectedException>()
                         .Handle<InvalidOperationException>(ex =>
                             ex.Message.Contains("response is empty", StringComparison.OrdinalIgnoreCase)
-                            || ex.Message.Contains("ThrowIfResponseIsEmpty", StringComparison.OrdinalIgnoreCase)),
+                            || ex.Message.Contains("ThrowIfResponseIsEmpty", StringComparison.OrdinalIgnoreCase)
+                            || IsRateLimitException(ex))
+                        .Handle<AggregateException>(ex => IsRateLimitException(ex.InnerException)),
                     OnOpened = args =>
                     {
                         _logger.LogError(
@@ -176,6 +190,30 @@ namespace enterprise_d365_gateway.Services
             return await _resiliencePipeline.ExecuteAsync(
                 async ct => await service.RetrieveMultipleAsync(query, ct),
                 cancellationToken);
+        }
+
+        private static bool IsRateLimitException(Exception? exception)
+        {
+            if (exception == null)
+            {
+                return false;
+            }
+
+            if (exception is AggregateException aggregate && aggregate.InnerException != null)
+            {
+                return IsRateLimitException(aggregate.InnerException);
+            }
+
+            if (exception is InvalidOperationException invalidOperation)
+            {
+                var message = invalidOperation.Message;
+                return message.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("too many requests", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("429", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("throttl", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return false;
         }
 
     }

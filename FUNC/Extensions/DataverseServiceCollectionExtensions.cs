@@ -16,7 +16,16 @@ namespace enterprise_d365_gateway.Extensions
             {
                 var opts = sp.GetRequiredService<IOptions<DataverseOptions>>().Value;
                 var availableMemory = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
-                var budgetBytes = (long)(availableMemory * opts.CacheMemoryBudgetPercent / 100.0);
+                var percentBudgetBytes = (long)(availableMemory * opts.CacheMemoryBudgetPercent / 100.0);
+                var minBudgetBytes = opts.CacheMemoryBudgetMinMb * 1024L * 1024L;
+                var maxBudgetBytes = opts.CacheMemoryBudgetMaxMb * 1024L * 1024L;
+
+                if (maxBudgetBytes < minBudgetBytes)
+                {
+                    maxBudgetBytes = minBudgetBytes;
+                }
+
+                var budgetBytes = Math.Clamp(percentBudgetBytes, minBudgetBytes, maxBudgetBytes);
 
                 return new MemoryCache(new MemoryCacheOptions
                 {

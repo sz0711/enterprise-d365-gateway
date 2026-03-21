@@ -21,6 +21,9 @@ namespace enterprise_d365_gateway.Models
         [Range(50, 5000)]
         public int RetryBaseDelayMs { get; set; } = 200;
 
+        [Range(5, 900)]
+        public int RateLimitRetryDelaySeconds { get; set; } = 300;
+
         [Range(5, 300)]
         public int TimeoutPerOperationSeconds { get; set; } = 30;
 
@@ -42,6 +45,12 @@ namespace enterprise_d365_gateway.Models
 
         [Range(1, 90)]
         public int CacheMemoryBudgetPercent { get; set; } = 20;
+
+        [Range(16, 8192)]
+        public int CacheMemoryBudgetMinMb { get; set; } = 64;
+
+        [Range(16, 8192)]
+        public int CacheMemoryBudgetMaxMb { get; set; } = 512;
 
         [Range(32, 4096)]
         public long CacheEntrySizeBytes { get; set; } = 128;
