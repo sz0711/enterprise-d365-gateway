@@ -54,9 +54,14 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var resultMapper = new ResultMapper();
 
         // Real EntityUpsertExecutor backed by FakeXrmEasy in-memory context
+        var concurrencyLimiterForExecutor = new AdaptiveConcurrencyLimiter(
+            new Mock<ILogger<AdaptiveConcurrencyLimiter>>().Object,
+            Options.Create(_options));
+
         var executor = new EntityUpsertExecutor(
             _fakeXrm.FactoryMock.Object,
             new Mock<ILogger<EntityUpsertExecutor>>().Object,
+            concurrencyLimiterForExecutor,
             Options.Create(_options));
 
         var externalIdResolver = new ExternalIdResolver(
@@ -66,6 +71,10 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var lookupResolver = new LookupResolver(
             executor,
             new Mock<ILogger<LookupResolver>>().Object,
+            Options.Create(_options));
+
+        var concurrencyLimiter = new AdaptiveConcurrencyLimiter(
+            new Mock<ILogger<AdaptiveConcurrencyLimiter>>().Object,
             Options.Create(_options));
 
         _sut = new UpsertOrchestrator(
@@ -78,6 +87,7 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
             errorClassifier,
             resultMapper,
             entityMappingCache,
+            concurrencyLimiter,
             new Mock<ILogger<UpsertOrchestrator>>().Object,
             Options.Create(_options));
     }

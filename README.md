@@ -8,13 +8,14 @@
 
 | Feature | Status | Details |
 |---|---|---|
-| 🔀 SOLID Architecture | ✅ Done | 7 interfaces, 9 services, `UpsertOrchestrator` pipeline |
+| 🔀 SOLID Architecture | ✅ Done | 8 interfaces, 10 services, `UpsertOrchestrator` pipeline |
 | 📝 Contracts | ✅ Done | `KeyAttributes`, `ErrorCategory`, `NestedLookups`, `LookupTraces` |
 | 🔍 Recursive Lookup Resolution | ✅ Done | Cycle detection, configurable depth, `CreateIfNotExists` |
 | 🧠 In-Memory Cache | ✅ Done | `IMemoryCache` with sliding/absolute TTL, RAM-based `SizeLimit` |
 | 🛡️ Polly v8 Resilience | ✅ Done | Retry → CircuitBreaker → Timeout pipeline |
 | 🔒 Keyed Concurrency | ✅ Done | `SemaphoreSlim(1,1)` per normalized `KeyAttributes` signature |
 | ⚡ Rate Limiting | ✅ Done | Token bucket per Dataverse API call |
+| 📈 Adaptive Concurrency | ✅ Done | AIMD algorithm: halve on 429, increment after sustained success |
 | 🚫 Plugin Step Bypass | ✅ Done | `BypassBusinessLogicExecutionStepIds` per entity |
 | 🌐 HTTP Trigger | ✅ Done | `POST /api/upsert` with batch support |
 | 📨 Service Bus Trigger | ✅ Done | Queue-driven upsert processing |
@@ -22,8 +23,8 @@
 | 🔐 Managed Identity Auth | ✅ Done | User-assigned managed identity via `ServiceClient` |
 | 📈 Load Test Script | ✅ Done | Multi-threaded PowerShell with p50/p95/p99 reporting |
 | 📖 Documentation | ✅ Done | Full README, config table, JSON examples |
-| 🪧 Unit Tests | ✅ Done | 88 xUnit tests - all 9 services fully covered |
-| 🧪 Integration Tests | ✅ Done | 23 tests - FakeXrmEasy v9, HTTP trigger, ServiceBus trigger, DI |
+| 🪧 Unit Tests | ✅ Done | 103 xUnit tests - all 10 services fully covered |
+| 🧪 Integration Tests | ✅ Done | 22 tests - FakeXrmEasy v9, HTTP trigger, ServiceBus trigger, DI |
 
 ---
 
@@ -41,6 +42,7 @@ This repository implements:
 - 🔗 **Dataverse upsert orchestration** via `IOrganizationServiceAsync2` and `Microsoft.PowerPlatform.Dataverse.Client`
 - 🔐 **User-assigned managed identity** authentication
 - ⚡ **Rate limiting** (token bucket) and configurable degree-of-parallelism
+- 📈 **Adaptive concurrency** (AIMD) - automatically halves parallelism on 429 throttling, recovers after sustained success
 - 🏷️ **Early-bound entity validation** and conversion via `MODEL` assembly
 
 ---
@@ -67,7 +69,8 @@ This repository implements:
 | 🧠 | `IExternalIdResolver` | KeyAttributes→Guid resolution with cache-first, invalidation on failure |
 | 🔍 | `ILookupResolver` | Recursive lookup resolution with cycle detection + depth limits |
 | ⚡ | `IEntityUpsertExecutor` | Dataverse Create/Update/Query wrapped in Polly v8 resilience + rate limiter |
-| 🔒 | `IUpsertLockCoordinator` | Keyed `SemaphoreSlim(1,1)` per normalized KeyAttributes signature |
+| � | `IAdaptiveConcurrencyLimiter` | AIMD concurrency control: halve on throttle, increment on sustained success |
+| �🔒 | `IUpsertLockCoordinator` | Keyed `SemaphoreSlim(1,1)` per normalized KeyAttributes signature |
 | 🚨 | `IErrorClassifier` | Exception → `ErrorCategory` mapping |
 | 📤 | `IResultMapper` | UpsertResult construction + batch HTTP status code determination |
 | 🎯 | `UpsertOrchestrator` | Thin pipeline coordinating all above services |
@@ -78,17 +81,17 @@ This repository implements:
 FUNC/
 ├── 📁 Extensions/          → DI registration (DataverseServiceCollectionExtensions.cs)
 ├── 📁 Functions/            → HTTP + ServiceBus triggers
-├── 📁 Interfaces/           → 7 service interfaces
+├── 📁 Interfaces/           → 8 service interfaces
 ├── 📁 Models/               → DataverseOptions, UpsertContracts, ErrorCategory
-├── 📁 Services/             → 9 service implementations
+├── 📁 Services/             → 10 service implementations
 ├── 📄 Program.cs            → Host builder + DI setup
 MODEL/
 ├── 📁 Model/Entities/       → Early-bound entity classes (account, contact)
 ├── 📁 Model/OptionSets/     → OptionSet enums
 └── 📁 Scripts/              → Code generation scripts
 TESTS/
-├── 📁 Unit/                 → 88 unit tests (all 9 services)
-├── 📁 Integration/          → 23 integration tests (FakeXrmEasy, triggers, DI)
+├── 📁 Unit/                 → 103 unit tests (all 10 services)
+├── 📁 Integration/          → 22 integration tests (FakeXrmEasy, triggers, DI)
 └── 📄 enterprise-d365-gateway.Tests.csproj
 ```
 
@@ -102,7 +105,10 @@ TESTS/
 | `Dataverse__Url` | Dataverse org URL | *(required)* |
 | `Dataverse__UserAssignedManagedIdentityClientId` | Managed identity client id | *(optional)* |
 | `Dataverse__MaxRequestsPerSecond` | Token bucket rate limit | `300` |
-| `Dataverse__MaxDegreeOfParallelism` | Parallel batch processing | `8` |
+| `Dataverse__MaxDegreeOfParallelism` | Max parallel batch processing | `8` |
+| `Dataverse__MinDegreeOfParallelism` | Floor for adaptive concurrency | `1` |
+| `Dataverse__AdaptiveConcurrencyEnabled` | Enable AIMD auto-tuning of parallelism | `true` |
+| `Dataverse__AdaptiveConcurrencySuccessThreshold` | Consecutive successes before parallelism +1 | `20` |
 | `Dataverse__MaxRetries` | Retry attempts per operation | `4` |
 | `Dataverse__RetryBaseDelayMs` | Base delay for exponential backoff | `200` |
 | `Dataverse__RateLimitRetryDelaySeconds` | Fixed cooldown for 429/rate-limit retries | `300` |
@@ -317,7 +323,19 @@ All Dataverse I/O (Create, Update, RetrieveMultiple) goes through a unified resi
 
 ---
 
-## 🔒 Concurrency Control
+## � Adaptive Concurrency (AIMD)
+Batch parallelism is dynamically tuned using an **Additive Increase / Multiplicative Decrease** algorithm (same principle as TCP congestion control):
+
+- 📉 **Multiplicative Decrease**: On every 429 (rate-limit) response, the effective parallelism is **halved** (floor: `MinDegreeOfParallelism`).
+- 📈 **Additive Increase**: After `AdaptiveConcurrencySuccessThreshold` consecutive successful operations, parallelism increases by **+1** (ceiling: `MaxDegreeOfParallelism`).
+- 🔄 **Start high**: Initial limit equals `MaxDegreeOfParallelism`; the system self-tunes downward on throttling and recovers when pressure subsides.
+- 🧵 **Thread-safe**: Lock-free via `Interlocked` / `Volatile` — no contention under high concurrency.
+
+The `EntityUpsertExecutor` signals `RecordThrottle()` on 429 retries and `RecordSuccess()` after each successful Dataverse call. The `UpsertOrchestrator` reads `CurrentLimit` before each batch to set `ParallelOptions.MaxDegreeOfParallelism`.
+
+---
+
+## �🔒 Concurrency Control
 - 🏷️ `KeyAttributes` is **required** for every main entity and every lookup/nested lookup.
 - ✂️ A deterministic signature is derived server-side: `{entity}:{sorted key=value pairs}`.
 - 🔀 Identical `KeyAttributes` signatures are **serialized** (keyed `SemaphoreSlim(1,1)`), preventing race conditions on the same record.
@@ -356,7 +374,7 @@ Dataverse__BypassPluginStepIds__contact=a1b2c3d4-...
 
 ## 🧪 Testing
 
-**115 tests total**, all passing.
+**125 tests total**, all passing.
 
 ```powershell
 # Run all tests
@@ -366,27 +384,28 @@ dotnet test TESTS/ --verbosity normal
 dotnet test TESTS/ --collect:"XPlat Code Coverage"
 ```
 
-### Unit Tests (88)
+### Unit Tests (103)
 | Service | Tests |
 |---|---|
-| `ErrorClassifier` | 10 |
-| `ResultMapper` | 10 |
-| `DataverseValueNormalizer` | 10 |
-| `RequestValidator` | 10 |
-| `UpsertLockCoordinator` | 8 |
-| `EntityMappingCache` | 8 |
-| `EarlyboundEntityMapper` | 8 |
-| `ExternalIdResolver` | 12 |
-| `LookupResolver` | 6 |
-| `EntityUpsertExecutor` | 6 |
+| `ErrorClassifier` | 14 |
+| `DataverseValueNormalizer` | 13 |
+| `RequestValidator` | 12 |
+| `AdaptiveConcurrencyLimiter` | 10 |
+| `LookupResolver` | 10 |
+| `EarlyboundEntityMapper` | 9 |
+| `ExternalIdResolver` | 8 |
+| `ResultMapper` | 8 |
+| `EntityUpsertExecutor` | 7 |
+| `EntityMappingCache` | 6 |
+| `UpsertLockCoordinator` | 6 |
 
-### Integration Tests (23)
+### Integration Tests (22)
 | Scope | Tests | Notes |
 |---|---|---|
 | `UpsertOrchestrator` | 9 | FakeXrmEasy v9 in-memory Dataverse |
 | `HttpUpsertTrigger` | 6 | End-to-end HTTP trigger testing |
 | `ServiceBusTrigger` | 5 | Queue-driven processing |
-| `DependencyInjection` | 3 | Full DI container validation |
+| `DependencyInjection` | 2 | Full DI container validation |
 
 ### Test Stack
 - **xUnit 2.9.2** - test framework

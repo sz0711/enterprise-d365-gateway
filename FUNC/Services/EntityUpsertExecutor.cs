@@ -18,6 +18,7 @@ namespace enterprise_d365_gateway.Services
     {
         private readonly IDataverseServiceClientFactory _serviceClientFactory;
         private readonly ILogger<EntityUpsertExecutor> _logger;
+        private readonly IAdaptiveConcurrencyLimiter _concurrencyLimiter;
         private readonly ResiliencePipeline _resiliencePipeline;
         private readonly TokenBucketRateLimiter _rateLimiter;
         private readonly Dictionary<string, string> _bypassStepIds;
@@ -25,10 +26,12 @@ namespace enterprise_d365_gateway.Services
         public EntityUpsertExecutor(
             IDataverseServiceClientFactory serviceClientFactory,
             ILogger<EntityUpsertExecutor> logger,
+            IAdaptiveConcurrencyLimiter concurrencyLimiter,
             IOptions<DataverseOptions> options)
         {
             _serviceClientFactory = serviceClientFactory;
             _logger = logger;
+            _concurrencyLimiter = concurrencyLimiter;
             var opts = options.Value;
 
             _resiliencePipeline = new ResiliencePipelineBuilder()
@@ -65,10 +68,12 @@ namespace enterprise_d365_gateway.Services
                         var exception = args.Outcome.Exception;
                         if (IsRateLimitException(exception))
                         {
+                            _concurrencyLimiter.RecordThrottle();
                             _logger.LogWarning(
-                                "Dataverse throttling detected (429/rate-limit). Retrying operation. Attempt={Attempt}, Delay={DelayMs}ms",
+                                "Dataverse throttling detected (429/rate-limit). Retrying operation. Attempt={Attempt}, Delay={DelayMs}ms, Concurrency={Concurrency}",
                                 args.AttemptNumber,
-                                args.RetryDelay.TotalMilliseconds);
+                                args.RetryDelay.TotalMilliseconds,
+                                _concurrencyLimiter.CurrentLimit);
                         }
                         else
                         {
@@ -155,18 +160,22 @@ namespace enterprise_d365_gateway.Services
 
             if (_bypassStepIds.TryGetValue(entity.LogicalName, out var createStepIds))
             {
-                return await _resiliencePipeline.ExecuteAsync(async ct =>
+                var result = await _resiliencePipeline.ExecuteAsync(async ct =>
                 {
                     var request = new CreateRequest { Target = entity };
                     request.Parameters.Add("BypassBusinessLogicExecutionStepIds", createStepIds);
                     var response = (CreateResponse)await service.ExecuteAsync(request, ct);
                     return response.id;
                 }, cancellationToken);
+                _concurrencyLimiter.RecordSuccess();
+                return result;
             }
 
-            return await _resiliencePipeline.ExecuteAsync(
+            var id = await _resiliencePipeline.ExecuteAsync(
                 async ct => await service.CreateAsync(entity, ct),
                 cancellationToken);
+            _concurrencyLimiter.RecordSuccess();
+            return id;
         }
 
         public async Task UpdateAsync(Entity entity, CancellationToken cancellationToken = default)
@@ -185,6 +194,7 @@ namespace enterprise_d365_gateway.Services
                     request.Parameters.Add("BypassBusinessLogicExecutionStepIds", updateStepIds);
                     await service.ExecuteAsync(request, ct);
                 }, cancellationToken);
+                _concurrencyLimiter.RecordSuccess();
                 return;
             }
 
@@ -192,6 +202,7 @@ namespace enterprise_d365_gateway.Services
             {
                 await service.UpdateAsync(entity, ct);
             }, cancellationToken);
+            _concurrencyLimiter.RecordSuccess();
         }
 
         public async Task<EntityCollection> RetrieveMultipleAsync(QueryExpression query, CancellationToken cancellationToken = default)
@@ -202,9 +213,11 @@ namespace enterprise_d365_gateway.Services
 
             var service = await _serviceClientFactory.GetOrCreateServiceAsync(cancellationToken);
 
-            return await _resiliencePipeline.ExecuteAsync(
+            var result = await _resiliencePipeline.ExecuteAsync(
                 async ct => await service.RetrieveMultipleAsync(query, ct),
                 cancellationToken);
+            _concurrencyLimiter.RecordSuccess();
+            return result;
         }
 
         private static bool IsRateLimitException(Exception? exception)

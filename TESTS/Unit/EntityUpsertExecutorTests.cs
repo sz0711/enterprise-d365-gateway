@@ -36,10 +36,12 @@ public class EntityUpsertExecutorTests
         var opts = options ?? DefaultOptions();
         var mockFactory = new MockServiceClientFactory();
         var logger = new Mock<ILogger<EntityUpsertExecutor>>();
+        var concurrencyLimiter = new Mock<IAdaptiveConcurrencyLimiter>();
 
         var sut = new EntityUpsertExecutor(
             mockFactory.FactoryMock.Object,
             logger.Object,
+            concurrencyLimiter.Object,
             Options.Create(opts));
 
         return (sut, mockFactory);

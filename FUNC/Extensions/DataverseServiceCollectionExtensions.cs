@@ -50,6 +50,7 @@ namespace enterprise_d365_gateway.Extensions
             services.AddSingleton<ILookupResolver, LookupResolver>();
 
             // Execution and Resilience
+            services.AddSingleton<IAdaptiveConcurrencyLimiter, AdaptiveConcurrencyLimiter>();
             services.AddSingleton<IEntityUpsertExecutor, EntityUpsertExecutor>();
 
             // Concurrency

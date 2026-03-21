@@ -43,6 +43,7 @@ public class DependencyInjectionTests
         provider.GetService<IExternalIdResolver>().Should().NotBeNull();
         provider.GetService<ILookupResolver>().Should().NotBeNull();
         provider.GetService<IEntityUpsertExecutor>().Should().NotBeNull();
+        provider.GetService<IAdaptiveConcurrencyLimiter>().Should().NotBeNull();
         provider.GetService<IUpsertLockCoordinator>().Should().NotBeNull();
         provider.GetService<IErrorClassifier>().Should().NotBeNull();
         provider.GetService<IResultMapper>().Should().NotBeNull();
@@ -70,6 +71,7 @@ public class DependencyInjectionTests
             typeof(IExternalIdResolver),
             typeof(ILookupResolver),
             typeof(IEntityUpsertExecutor),
+            typeof(IAdaptiveConcurrencyLimiter),
             typeof(IUpsertLockCoordinator),
             typeof(IErrorClassifier),
             typeof(IResultMapper),

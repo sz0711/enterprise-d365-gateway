@@ -17,6 +17,7 @@ namespace enterprise_d365_gateway.Services
         private readonly IErrorClassifier _errorClassifier;
         private readonly IResultMapper _resultMapper;
         private readonly IEntityMappingCache _cache;
+        private readonly IAdaptiveConcurrencyLimiter _concurrencyLimiter;
         private readonly ILogger<UpsertOrchestrator> _logger;
         private readonly DataverseOptions _options;
 
@@ -30,6 +31,7 @@ namespace enterprise_d365_gateway.Services
             IErrorClassifier errorClassifier,
             IResultMapper resultMapper,
             IEntityMappingCache cache,
+            IAdaptiveConcurrencyLimiter concurrencyLimiter,
             ILogger<UpsertOrchestrator> logger,
             IOptions<DataverseOptions> options)
         {
@@ -42,6 +44,7 @@ namespace enterprise_d365_gateway.Services
             _errorClassifier = errorClassifier;
             _resultMapper = resultMapper;
             _cache = cache;
+            _concurrencyLimiter = concurrencyLimiter;
             _logger = logger;
             _options = options.Value;
         }
@@ -60,11 +63,16 @@ namespace enterprise_d365_gateway.Services
                 return Array.Empty<UpsertResult>();
 
             var results = new UpsertResult[requestList.Count];
+            var effectiveParallelism = _concurrencyLimiter.CurrentLimit;
             var options = new ParallelOptions
             {
                 CancellationToken = cancellationToken,
-                MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism
+                MaxDegreeOfParallelism = effectiveParallelism
             };
+
+            _logger.LogInformation(
+                "Starting batch upsert. Total={Total}, Parallelism={Parallelism}",
+                requestList.Count, effectiveParallelism);
 
             await Parallel.ForEachAsync(
                 Enumerable.Range(0, requestList.Count),
