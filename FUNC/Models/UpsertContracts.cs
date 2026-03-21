@@ -1,74 +1,64 @@
-using System.Runtime.Serialization;
-
 namespace enterprise_d365_gateway.Models
 {
-    [DataContract]
     public class UpsertPayload
     {
-        [DataMember(IsRequired = true)]
         public required string EntityLogicalName { get; set; }
-
-        [DataMember(IsRequired = false)]
+        public string? UpsertKey { get; set; }
         public Guid? Id { get; set; }
-
-        [DataMember(IsRequired = true)]
         public required IDictionary<string, object?> Attributes { get; set; }
-
-        [DataMember(IsRequired = false)]
         public string? SourceSystem { get; set; }
-
-        [DataMember(IsRequired = false)]
         public string? ExternalIdAttribute { get; set; }
-
-        [DataMember(IsRequired = false)]
         public object? ExternalIdValue { get; set; }
-
-        [DataMember(IsRequired = false)]
         public IDictionary<string, LookupDefinition>? Lookups { get; set; }
+        public int? MaxLookupDepth { get; set; }
     }
 
-    [DataContract]
     public class LookupDefinition
     {
-        [DataMember(IsRequired = true)]
         public required string EntityLogicalName { get; set; }
-
-        [DataMember(IsRequired = true)]
+        public string? UpsertKey { get; set; }
         public required IDictionary<string, object?> AlternateKeyAttributes { get; set; }
-
-        [DataMember(IsRequired = false)]
-        public bool CreateIfNotExists { get; set; } = false;
-
-        [DataMember(IsRequired = false)]
+        public bool CreateIfNotExists { get; set; }
         public IDictionary<string, object?>? CreateAttributes { get; set; }
+        public IDictionary<string, LookupDefinition>? NestedLookups { get; set; }
+        public int? MaxDepth { get; set; }
     }
 
-    [DataContract]
     public class UpsertBatchRequest
     {
-        [DataMember(IsRequired = true)]
         public required IList<UpsertPayload> Payloads { get; set; }
+        public int? MaxLookupDepth { get; set; }
     }
 
-    [DataContract]
+    public enum ErrorCategory
+    {
+        None = 0,
+        Validation = 1,
+        Transient = 2,
+        Permanent = 3,
+        Throttling = 4,
+        Cancellation = 5
+    }
+
     public class UpsertResult
     {
-        [DataMember]
         public Guid Id { get; set; }
-
-        [DataMember]
         public bool Created { get; set; }
-
-        [DataMember]
         public string? EntityLogicalName { get; set; }
-
-        [DataMember]
+        public string? UpsertKey { get; set; }
         public string? ErrorMessage { get; set; }
-
-        [DataMember]
-        public bool IsValidationError { get; set; }
-
-        [DataMember]
+        public ErrorCategory ErrorCategory { get; set; }
         public IList<string>? ValidationErrors { get; set; }
+        public IList<LookupTrace>? LookupTraces { get; set; }
+    }
+
+    public class LookupTrace
+    {
+        public required string AttributeName { get; set; }
+        public required string EntityLogicalName { get; set; }
+        public Guid? ResolvedId { get; set; }
+        public bool WasCreated { get; set; }
+        public int Depth { get; set; }
+        public IList<LookupTrace>? NestedTraces { get; set; }
     }
 }

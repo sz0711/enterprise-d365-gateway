@@ -28,6 +28,13 @@ param(
     [int]$LookupProbabilityPercent = 100,
 
     [Parameter(Mandatory=$false)]
+    [ValidateRange(0, 50)]
+    [int]$DuplicateBurstSize = 0,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$IncludeNegativeTests,
+
+    [Parameter(Mandatory=$false)]
     [string]$ReportPath
 )
 
@@ -54,6 +61,8 @@ Write-Host "Total expected payloads: $($ThreadCount * $RequestsPerThread * $Batc
 Write-Host "Target URL: $FunctionUrl"
 Write-Host "Request timeout: $RequestTimeoutSeconds seconds"
 Write-Host "Lookup probability: $LookupProbabilityPercent%"
+Write-Host "Duplicate burst size: $DuplicateBurstSize"
+Write-Host "Include negative tests: $IncludeNegativeTests"
 Write-Host ""
 
 $startTime = Get-Date
@@ -62,7 +71,7 @@ $startTime = Get-Date
 $jobs = @()
 for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
     $job = Start-Job -ScriptBlock {
-        param($Url, $Key, $ThreadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent)
+        param($Url, $Key, $ThreadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests)
 
         # Function to generate random payload (defined inside job)
         function New-RandomPayload {
@@ -76,12 +85,14 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
             $randomName = $accountNames | Get-Random
             $randomCity = $cities | Get-Random
             $externalId = "EXT-{0:D6}" -f $Index
+            $upsertKey = "LT-T{0}-{1:D6}" -f $ThreadId, $Index
 
             # Sometimes add a lookup to contact
             $includeLookup = (Get-Random -Minimum 1 -Maximum 101) -le $LookupProbabilityPercent
 
             $payload = @{
                 EntityLogicalName = "account"
+                UpsertKey = $upsertKey
                 Attributes = @{
                     name = "$randomName ($Index)"
                     address1_city = $randomCity
@@ -100,6 +111,7 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
                 $payload.Lookups = @{
                     primarycontactid = @{
                         EntityLogicalName = "contact"
+                        UpsertKey = "LT-CONTACT-$email"
                         AlternateKeyAttributes = @{
                             emailaddress1 = $email
                         }
@@ -133,14 +145,40 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
             try {
                 for ($i = 0; $i -lt $RequestsPerThread; $i++) {
                     $payloads = @()
-                    for ($j = 0; $j -lt $BatchSize; $j++) {
-                        $globalIndex = ($ThreadId * $RequestsPerThread * $BatchSize) + ($i * $BatchSize) + $j
-                        $payloads += New-RandomPayload -Index $globalIndex
+
+                    # Negative test: send invalid JSON every 50th request
+                    $sendInvalid = $IncludeNegativeTests -and (($i + 1) % 50 -eq 0)
+                    # Negative test: send type error every 25th request
+                    $sendTypeError = $IncludeNegativeTests -and -not $sendInvalid -and (($i + 1) % 25 -eq 0)
+
+                    if (-not $sendInvalid) {
+                        for ($j = 0; $j -lt $BatchSize; $j++) {
+                            $globalIndex = ($ThreadId * $RequestsPerThread * $BatchSize) + ($i * $BatchSize) + $j
+                            $p = New-RandomPayload -Index $globalIndex
+
+                            if ($sendTypeError -and $j -eq 0) {
+                                # Inject a type error: put a string where an int is expected
+                                $p.Attributes["address1_utcoffset"] = "not-a-number"
+                            }
+
+                            $payloads += $p
+                        }
+
+                        # Duplicate burst: repeat the first payload N times
+                        if ($DuplicateBurstSize -gt 0 -and $payloads.Count -gt 0) {
+                            for ($d = 0; $d -lt $DuplicateBurstSize; $d++) {
+                                $payloads += $payloads[0]
+                            }
+                        }
                     }
 
-                    $requestBody = @{
-                        Payloads = $payloads
-                    } | ConvertTo-Json -Depth 10
+                    if ($sendInvalid) {
+                        $requestBody = '{"Payloads": [{"broken json'
+                    } else {
+                        $requestBody = @{
+                            Payloads = $payloads
+                        } | ConvertTo-Json -Depth 10
+                    }
 
                     $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Post, $Url)
                     $request.Headers.Add("x-correlation-id", [Guid]::NewGuid().ToString())
@@ -206,7 +244,7 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
 
         # Execute the function
         Send-BatchRequest -Url $Url -Key $Key -ThreadId $ThreadId -RequestsPerThread $RequestsPerThread -BatchSize $BatchSize
-    } -ArgumentList $FunctionUrl, $FunctionKey, $threadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent
+    } -ArgumentList $FunctionUrl, $FunctionKey, $threadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests.IsPresent
     $jobs += $job
 }
 

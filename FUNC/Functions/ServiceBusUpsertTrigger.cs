@@ -34,8 +34,8 @@ namespace enterprise_d365_gateway.Functions
                 }
 
                 var results = await _upsertService.UpsertBatchAsync(payload.Payloads, context.CancellationToken);
-                var failures = results.Count(r => !string.IsNullOrWhiteSpace(r.ErrorMessage));
-                var validationFailures = results.Count(r => r.IsValidationError);
+                var failures = results.Count(r => r.ErrorCategory != ErrorCategory.None);
+                var validationFailures = results.Count(r => r.ErrorCategory == ErrorCategory.Validation);
                 var technicalFailures = failures - validationFailures;
 
                 if (failures > 0)

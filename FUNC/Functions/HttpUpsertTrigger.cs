@@ -11,11 +11,13 @@ namespace enterprise_d365_gateway.Functions
     public class HttpUpsertTrigger
     {
         private readonly IDataverseUpsertService _upsertService;
+        private readonly IResultMapper _resultMapper;
         private readonly ILogger<HttpUpsertTrigger> _logger;
 
-        public HttpUpsertTrigger(IDataverseUpsertService upsertService, ILogger<HttpUpsertTrigger> logger)
+        public HttpUpsertTrigger(IDataverseUpsertService upsertService, IResultMapper resultMapper, ILogger<HttpUpsertTrigger> logger)
         {
             _upsertService = upsertService;
+            _resultMapper = resultMapper;
             _logger = logger;
         }
 
@@ -74,13 +76,11 @@ namespace enterprise_d365_gateway.Functions
                 return errorResponse;
             }
 
-            var failures = result.Count(r => !string.IsNullOrWhiteSpace(r.ErrorMessage));
-            var validationFailures = result.Count(r => r.IsValidationError);
+            var failures = result.Count(r => r.ErrorCategory != ErrorCategory.None);
+            var validationFailures = result.Count(r => r.ErrorCategory == ErrorCategory.Validation);
             var technicalFailures = failures - validationFailures;
 
-            var statusCode = technicalFailures > 0
-                ? HttpStatusCode.InternalServerError
-                : (validationFailures > 0 ? HttpStatusCode.BadRequest : HttpStatusCode.OK);
+            var statusCode = _resultMapper.DetermineBatchStatusCode(result);
 
             _logger.LogInformation(
                 "HTTP upsert finished. CorrelationId={CorrelationId}, Total={Total}, Failed={Failed}, ValidationFailed={ValidationFailed}, TechnicalFailed={TechnicalFailed}",

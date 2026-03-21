@@ -149,6 +149,7 @@ namespace enterprise_d365_gateway.Services
                 {
                     var cachedId = await _entityMappingCache.GetAsync(
                         payload.EntityLogicalName,
+                        payload.ExternalIdAttribute,
                         externalKey,
                         cancellationToken);
 
@@ -165,6 +166,7 @@ namespace enterprise_d365_gateway.Services
                         {
                             await _entityMappingCache.SetAsync(
                                 payload.EntityLogicalName,
+                                payload.ExternalIdAttribute,
                                 externalKey,
                                 existingId.Value,
                                 cancellationToken);
@@ -198,6 +200,7 @@ namespace enterprise_d365_gateway.Services
                         {
                             await _entityMappingCache.SetAsync(
                                 payload.EntityLogicalName,
+                                payload.ExternalIdAttribute,
                                 key,
                                 id,
                                 ct);
@@ -230,7 +233,7 @@ namespace enterprise_d365_gateway.Services
                     EntityLogicalName = payload.EntityLogicalName,
                     Id = payload.Id ?? Guid.Empty,
                     Created = false,
-                    IsValidationError = true,
+                    ErrorCategory = ErrorCategory.Validation,
                     ValidationErrors = ex.ValidationErrors.ToList(),
                     ErrorMessage = ex.Message
                 };
@@ -244,7 +247,7 @@ namespace enterprise_d365_gateway.Services
                     EntityLogicalName = payload.EntityLogicalName,
                     Id = payload.Id ?? Guid.Empty,
                     Created = false,
-                    IsValidationError = false,
+                    ErrorCategory = ErrorCategory.Permanent,
                     ErrorMessage = ex.Message
                 };
             }
