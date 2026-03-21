@@ -30,7 +30,7 @@ namespace enterprise_d365_gateway.Services
                 throw new InvalidOperationException("Dataverse URL configuration is required (Dataverse:Url).");
         }
 
-        public async Task<ServiceClient> GetOrCreateServiceAsync(CancellationToken cancellationToken = default)
+        public async Task<IOrganizationServiceAsync2> GetOrCreateServiceAsync(CancellationToken cancellationToken = default)
         {
             if (_serviceClient != null && _serviceClient.IsReady)
             {

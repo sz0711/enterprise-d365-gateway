@@ -22,8 +22,8 @@
 | 🔐 Managed Identity Auth | ✅ Done | User-assigned managed identity via `ServiceClient` |
 | 📈 Load Test Script | ✅ Done | Multi-threaded PowerShell with p50/p95/p99 reporting |
 | 📖 Documentation | ✅ Done | Full README, config table, JSON examples |
-| 🪧 Unit Tests | 🔲 Planned | xUnit test project for all services |
-| 🧪 Integration Tests | 🔲 Planned | End-to-end Dataverse round-trip tests |
+| 🪧 Unit Tests | ✅ Done | 88 xUnit tests — all 9 services fully covered |
+| 🧪 Integration Tests | ✅ Done | 23 tests — FakeXrmEasy v9, HTTP trigger, ServiceBus trigger, DI |
 
 ---
 
@@ -86,6 +86,10 @@ MODEL/
 ├── 📁 Model/Entities/       → Early-bound entity classes (account, contact)
 ├── 📁 Model/OptionSets/     → OptionSet enums
 └── 📁 Scripts/              → Code generation scripts
+TESTS/
+├── 📁 Unit/                 → 88 unit tests (all 9 services)
+├── 📁 Integration/          → 23 integration tests (FakeXrmEasy, triggers, DI)
+└── 📄 enterprise-d365-gateway.Tests.csproj
 ```
 
 ## ⚙️ Requirements
@@ -349,9 +353,53 @@ Dataverse__BypassPluginStepIds__contact=a1b2c3d4-...
 
 ---
 
+## 🧪 Testing
+
+**111 tests total** (88 unit + 23 integration), all passing.
+
+```powershell
+# Run all tests
+dotnet test TESTS/ --verbosity normal
+
+# Run with coverage
+dotnet test TESTS/ --collect:"XPlat Code Coverage"
+```
+
+### Unit Tests (88)
+| Service | Tests |
+|---|---|
+| `ErrorClassifier` | 10 |
+| `ResultMapper` | 10 |
+| `DataverseValueNormalizer` | 10 |
+| `RequestValidator` | 10 |
+| `UpsertLockCoordinator` | 8 |
+| `EntityMappingCache` | 8 |
+| `EarlyboundEntityMapper` | 8 |
+| `ExternalIdResolver` | 12 |
+| `LookupResolver` | 6 |
+| `EntityUpsertExecutor` | 6 |
+
+### Integration Tests (23)
+| Scope | Tests | Notes |
+|---|---|---|
+| `UpsertOrchestrator` | 9 | FakeXrmEasy v9 in-memory Dataverse |
+| `HttpUpsertTrigger` | 6 | End-to-end HTTP trigger testing |
+| `ServiceBusTrigger` | 5 | Queue-driven processing |
+| `DependencyInjection` | 3 | Full DI container validation |
+
+### Test Stack
+- **xUnit 2.9.2** — test framework
+- **Moq 4.20.72** — mocking
+- **FluentAssertions 6.12.2** — assertion library
+- **FakeXrmEasy.v9 3.8.0** — in-memory Dataverse (RPL-1.5 license)
+- **coverlet.collector 6.0.2** — code coverage
+
+---
+
 ## 🚀 How to Run Locally
 1. 📦 `dotnet build` (requires .NET 8 SDK).
 2. ▶️ `func start` in `FUNC` folder with `local.settings.json` configured.
+3. 🧪 `dotnet test TESTS/` to run the full test suite.
 
 ---
 

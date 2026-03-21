@@ -4,6 +4,6 @@ namespace enterprise_d365_gateway.Interfaces
 {
     public interface IDataverseServiceClientFactory
     {
-        Task<ServiceClient> GetOrCreateServiceAsync(CancellationToken cancellationToken = default);
+        Task<IOrganizationServiceAsync2> GetOrCreateServiceAsync(CancellationToken cancellationToken = default);
     }
 }

@@ -1,3 +1,9 @@
+# Azure / Local Emulators
+.azurite/
+
+# GitHub
+.github/
+
 # Build Results
 bin/
 obj/
