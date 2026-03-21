@@ -47,7 +47,26 @@ param(
     [switch]$IncludeNegativeTests,
 
     [Parameter(Mandatory=$false)]
-    [string]$ReportPath
+    [string]$ReportPath,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$AbortOnHigh429,
+
+    [Parameter(Mandatory=$false)]
+    [ValidateRange(1, 100)]
+    [int]$Abort429Percent = 60,
+
+    [Parameter(Mandatory=$false)]
+    [ValidateRange(5, 10000)]
+    [int]$AbortWindowRequests = 30,
+
+    [Parameter(Mandatory=$false)]
+    [ValidateRange(1, 20)]
+    [int]$AbortConsecutiveWindows = 2,
+
+    [Parameter(Mandatory=$false)]
+    [ValidateSet("Safe", "Normal", "Stress", "Custom")]
+    [string]$Profile = "Normal"
 )
 
 function Get-Percentile {
@@ -67,7 +86,49 @@ function Get-Percentile {
     return [double]$sorted[$index]
 }
 
+function Set-IfNotBound {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][object]$Value
+    )
+
+    if (-not $script:PSBoundParameters.ContainsKey($Name)) {
+        Set-Variable -Name $Name -Value $Value -Scope Script
+    }
+}
+
+if ($Profile -ne "Custom") {
+    switch ($Profile) {
+        "Safe" {
+            Set-IfNotBound -Name "ThreadCount" -Value 4
+            Set-IfNotBound -Name "RequestsPerThread" -Value 40
+            Set-IfNotBound -Name "BatchSize" -Value 2
+            Set-IfNotBound -Name "ThreadRampUpMs" -Value 1000
+            Set-IfNotBound -Name "InterRequestDelayMs" -Value 500
+            Set-IfNotBound -Name "InterRequestJitterMs" -Value 300
+            Set-IfNotBound -Name "DuplicateBurstSize" -Value 0
+        }
+        "Normal" {
+            Set-IfNotBound -Name "ThreadCount" -Value 6
+            Set-IfNotBound -Name "RequestsPerThread" -Value 80
+            Set-IfNotBound -Name "BatchSize" -Value 3
+            Set-IfNotBound -Name "ThreadRampUpMs" -Value 500
+            Set-IfNotBound -Name "InterRequestDelayMs" -Value 250
+            Set-IfNotBound -Name "InterRequestJitterMs" -Value 250
+        }
+        "Stress" {
+            Set-IfNotBound -Name "ThreadCount" -Value 12
+            Set-IfNotBound -Name "RequestsPerThread" -Value 120
+            Set-IfNotBound -Name "BatchSize" -Value 5
+            Set-IfNotBound -Name "ThreadRampUpMs" -Value 100
+            Set-IfNotBound -Name "InterRequestDelayMs" -Value 50
+            Set-IfNotBound -Name "InterRequestJitterMs" -Value 50
+        }
+    }
+}
+
 # Main script
+Write-Host "Load profile: $Profile"
 Write-Host "Starting load test with $ThreadCount threads, $RequestsPerThread requests per thread, $BatchSize payloads per request"
 Write-Host "Total expected payloads: $($ThreadCount * $RequestsPerThread * $BatchSize)"
 Write-Host "Target URL: $FunctionUrl"
@@ -76,6 +137,10 @@ Write-Host "Lookup probability: $LookupProbabilityPercent%"
 Write-Host "Duplicate burst size: $DuplicateBurstSize"
 Write-Host "Thread ramp-up: $ThreadRampUpMs ms"
 Write-Host "Inter-request delay: $InterRequestDelayMs ms (+ jitter up to $InterRequestJitterMs ms)"
+Write-Host "Abort on sustained 429: $AbortOnHigh429"
+if ($AbortOnHigh429) {
+    Write-Host "429 abort rule: >= $Abort429Percent% for $AbortConsecutiveWindows consecutive window(s) of $AbortWindowRequests request(s) per thread"
+}
 Write-Host "Include negative tests: $IncludeNegativeTests"
 Write-Host ""
 
@@ -85,7 +150,7 @@ $startTime = Get-Date
 $jobs = @()
 for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
     $job = Start-Job -ScriptBlock {
-        param($Url, $Key, $ThreadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests, $InterRequestDelayMs, $InterRequestJitterMs)
+        param($Url, $Key, $ThreadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests, $InterRequestDelayMs, $InterRequestJitterMs, $AbortOnHigh429, $Abort429Percent, $AbortWindowRequests, $AbortConsecutiveWindows)
 
         # Function to generate random payload (defined inside job)
         function New-RandomPayload {
@@ -147,12 +212,19 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
                 [string]$Key,
                 [int]$ThreadId,
                 [int]$RequestsPerThread,
-                [int]$BatchSize
+                [int]$BatchSize,
+                [bool]$AbortOnHigh429,
+                [int]$Abort429Percent,
+                [int]$AbortWindowRequests,
+                [int]$AbortConsecutiveWindows
             )
 
             $results = @()
             $httpClient = [System.Net.Http.HttpClient]::new()
             $httpClient.Timeout = [TimeSpan]::FromSeconds($RequestTimeoutSeconds)
+            $windowRequests = 0
+            $window429 = 0
+            $high429Windows = 0
 
             try {
                 for ($i = 0; $i -lt $RequestsPerThread; $i++) {
@@ -241,6 +313,32 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
 
                     $results += $result
 
+                    if ($AbortOnHigh429) {
+                        $windowRequests += 1
+                        if ($result.StatusCode -eq 429) {
+                            $window429 += 1
+                        }
+
+                        if ($windowRequests -ge $AbortWindowRequests) {
+                            $windowPercent = [math]::Round((100.0 * $window429) / $windowRequests, 2)
+                            if ($windowPercent -ge $Abort429Percent) {
+                                $high429Windows += 1
+                                Write-Warning "Thread $ThreadId high-429 window detected: $window429/$windowRequests ($windowPercent%). Consecutive windows=$high429Windows"
+                            }
+                            else {
+                                $high429Windows = 0
+                            }
+
+                            $windowRequests = 0
+                            $window429 = 0
+
+                            if ($high429Windows -ge $AbortConsecutiveWindows) {
+                                Write-Warning "Thread $ThreadId aborting early due to sustained 429 rate."
+                                break
+                            }
+                        }
+                    }
+
                     if ($InterRequestDelayMs -gt 0 -or $InterRequestJitterMs -gt 0) {
                         $jitter = if ($InterRequestJitterMs -gt 0) { Get-Random -Minimum 0 -Maximum ($InterRequestJitterMs + 1) } else { 0 }
                         Start-Sleep -Milliseconds ($InterRequestDelayMs + $jitter)
@@ -260,8 +358,8 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
         }
 
         # Execute the function
-        Send-BatchRequest -Url $Url -Key $Key -ThreadId $ThreadId -RequestsPerThread $RequestsPerThread -BatchSize $BatchSize
-    } -ArgumentList $FunctionUrl, $FunctionKey, $threadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests.IsPresent, $InterRequestDelayMs, $InterRequestJitterMs
+        Send-BatchRequest -Url $Url -Key $Key -ThreadId $ThreadId -RequestsPerThread $RequestsPerThread -BatchSize $BatchSize -AbortOnHigh429 $AbortOnHigh429 -Abort429Percent $Abort429Percent -AbortWindowRequests $AbortWindowRequests -AbortConsecutiveWindows $AbortConsecutiveWindows
+    } -ArgumentList $FunctionUrl, $FunctionKey, $threadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests.IsPresent, $InterRequestDelayMs, $InterRequestJitterMs, $AbortOnHigh429.IsPresent, $Abort429Percent, $AbortWindowRequests, $AbortConsecutiveWindows
     $jobs += $job
 
     if ($ThreadRampUpMs -gt 0 -and $threadId -lt ($ThreadCount - 1)) {

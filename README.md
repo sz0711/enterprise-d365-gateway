@@ -420,8 +420,20 @@ A PowerShell script `LoadTest.ps1` (repository root) is provided for load testin
 # Basic usage (requires PowerShell 7+)
 .\LoadTest.ps1 -FunctionUrl "http://localhost:7071/api/upsert" -FunctionKey "your-function-key"
 
+# Safe profile (best for avoiding 429 spikes)
+.\LoadTest.ps1 -FunctionUrl "http://localhost:7071/api/upsert" -Profile Safe
+
+# Stop early if 429 rate remains high
+.\LoadTest.ps1 -FunctionUrl "http://localhost:7071/api/upsert" `
+              -Profile Normal `
+              -AbortOnHigh429 `
+              -Abort429Percent 60 `
+              -AbortWindowRequests 30 `
+              -AbortConsecutiveWindows 2
+
 # Advanced usage with custom parameters
 .\LoadTest.ps1 -FunctionUrl "https://your-function.azurewebsites.net/api/upsert" `
+              -Profile Normal `
               -FunctionKey "your-function-key" `
               -ThreadCount 8 `
               -RequestsPerThread 40 `
@@ -434,6 +446,7 @@ A PowerShell script `LoadTest.ps1` (repository root) is provided for load testin
 Parameters:
 - `FunctionUrl`: The URL of the upsert endpoint (required)
 - `FunctionKey`: Azure Function key for authentication (optional)
+- `Profile`: Load profile (`Safe`, `Normal`, `Stress`, `Custom`; default: `Normal`)
 - `ThreadCount`: Number of parallel threads (default: 6)
 - `RequestsPerThread`: Number of requests per thread (default: 80)
 - `BatchSize`: Number of payloads per request (default: 3)
@@ -445,6 +458,16 @@ Parameters:
 - `DuplicateBurstSize`: Number of identical payloads to burst (default: 0 = off)
 - `IncludeNegativeTests`: Include invalid JSON/type error requests (default: false)
 - `ReportPath`: Optional JSON output path for detailed raw results
+- `AbortOnHigh429`: Stops a thread early when sustained 429 rate is above threshold
+- `Abort429Percent`: 429 percentage threshold per window (default: 60)
+- `AbortWindowRequests`: Number of requests in one evaluation window (default: 30)
+- `AbortConsecutiveWindows`: Consecutive high-429 windows required to abort (default: 2)
+
+Profile behavior:
+- `Safe`: very defensive throughput (best to minimize throttling and retry storms)
+- `Normal`: balanced throughput for regular performance tests
+- `Stress`: aggressive throughput to probe limits (expect higher 429 rates)
+- `Custom`: disables profile overrides and uses only explicitly provided parameter values
 
 The script generates random account data with `KeyAttributes` and reports:
 - Success/failure totals and throughput (requests/s, payloads/s)

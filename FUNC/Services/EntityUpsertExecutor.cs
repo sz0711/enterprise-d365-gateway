@@ -62,11 +62,23 @@ namespace enterprise_d365_gateway.Services
                             || IsRateLimitException(ex)),
                     OnRetry = args =>
                     {
-                        _logger.LogWarning(
-                            args.Outcome.Exception,
-                            "Retrying Dataverse operation. Attempt={Attempt}, Delay={DelayMs}ms",
-                            args.AttemptNumber,
-                            args.RetryDelay.TotalMilliseconds);
+                        var exception = args.Outcome.Exception;
+                        if (IsRateLimitException(exception))
+                        {
+                            _logger.LogWarning(
+                                "Dataverse throttling detected (429/rate-limit). Retrying operation. Attempt={Attempt}, Delay={DelayMs}ms",
+                                args.AttemptNumber,
+                                args.RetryDelay.TotalMilliseconds);
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "Retrying Dataverse operation. Attempt={Attempt}, Delay={DelayMs}ms, ErrorType={ErrorType}, Error={ErrorMessage}",
+                                args.AttemptNumber,
+                                args.RetryDelay.TotalMilliseconds,
+                                exception?.GetType().Name,
+                                exception?.Message);
+                        }
                         return ValueTask.CompletedTask;
                     }
                 })
