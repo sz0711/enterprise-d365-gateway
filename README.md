@@ -1,6 +1,6 @@
 # 🏢 enterprise-d365-gateway
 
-> 🔗 Enterprise-grade Azure Functions integration platform — seamless data synchronization between heterogeneous systems and Microsoft Dynamics 365 Customer Engagement.
+> 🔗 Enterprise-grade Azure Functions integration platform - seamless data synchronization between heterogeneous systems and Microsoft Dynamics 365 Customer Engagement.
 
 ---
 
@@ -22,22 +22,22 @@
 | 🔐 Managed Identity Auth | ✅ Done | User-assigned managed identity via `ServiceClient` |
 | 📈 Load Test Script | ✅ Done | Multi-threaded PowerShell with p50/p95/p99 reporting |
 | 📖 Documentation | ✅ Done | Full README, config table, JSON examples |
-| 🪧 Unit Tests | ✅ Done | 88 xUnit tests — all 9 services fully covered |
-| 🧪 Integration Tests | ✅ Done | 23 tests — FakeXrmEasy v9, HTTP trigger, ServiceBus trigger, DI |
+| 🪧 Unit Tests | ✅ Done | 88 xUnit tests - all 9 services fully covered |
+| 🧪 Integration Tests | ✅ Done | 23 tests - FakeXrmEasy v9, HTTP trigger, ServiceBus trigger, DI |
 
 ---
 
 ## 🏗️ Overview
 
 This repository implements:
-- ⚡ **HTTP trigger** (`DataverseUpsertHttp`) — incoming UPSERT requests in batch format
-- 📨 **Service Bus trigger** (`DataverseUpsertServiceBus`) — reliable queue-driven UPSERT processing
-- 🔀 **SOLID-decomposed pipeline** — clearly separated responsibilities (validation → lookup → execution → classification)
-- 🔍 **Recursive lookup resolution** — configurable max depth, cycle detection, per-lookup `CreateIfNotExists`
-- 🧠 **ExternalId→Guid in-memory cache** — per instance with sliding/absolute TTL and RAM-based size limits
-- 🔒 **Keyed concurrency control** per `UpsertKey` — identical keys serialized, distinct keys parallel
-- 🛡️ **Polly v8 resilience pipeline** — retry with exponential backoff + jitter, circuit breaker, per-operation timeout
-- 🏷️ **Structured error classification** — Validation, Transient, Permanent, Throttling, Cancellation with per-payload detail
+- ⚡ **HTTP trigger** (`DataverseUpsertHttp`) - incoming UPSERT requests in batch format
+- 📨 **Service Bus trigger** (`DataverseUpsertServiceBus`) - reliable queue-driven UPSERT processing
+- 🔀 **SOLID-decomposed pipeline** - clearly separated responsibilities (validation → lookup → execution → classification)
+- 🔍 **Recursive lookup resolution** - configurable max depth, cycle detection, per-lookup `CreateIfNotExists`
+- 🧠 **ExternalId→Guid in-memory cache** - per instance with sliding/absolute TTL and RAM-based size limits
+- 🔒 **Keyed concurrency control** per `UpsertKey` - identical keys serialized, distinct keys parallel
+- 🛡️ **Polly v8 resilience pipeline** - retry with exponential backoff + jitter, circuit breaker, per-operation timeout
+- 🏷️ **Structured error classification** - Validation, Transient, Permanent, Throttling, Cancellation with per-payload detail
 - 🔗 **Dataverse upsert orchestration** via `IOrganizationServiceAsync2` and `Microsoft.PowerPlatform.Dataverse.Client`
 - 🔐 **User-assigned managed identity** authentication
 - ⚡ **Rate limiting** (token bucket) and configurable degree-of-parallelism
@@ -115,7 +115,7 @@ TESTS/
 | `Dataverse__CacheEntrySizeBytes` | Estimated size per cache entry | `128` |
 | `Dataverse__MaxLookupDepth` | Global max recursive lookup depth | `3` |
 | `Dataverse__LookupTimeoutSeconds` | Timeout budget per lookup tree | `60` |
-| `Dataverse__BypassPluginStepIds__<entity>` | Comma-separated plugin step registration GUIDs to bypass for `<entity>` | *(empty — no bypass)* |
+| `Dataverse__BypassPluginStepIds__<entity>` | Comma-separated plugin step registration GUIDs to bypass for `<entity>` | *(empty - no bypass)* |
 | `ServiceBusConnection` | Azure Service Bus connection string | *(required for SB trigger)* |
 | `ServiceBusQueueName` | Queue name | *(required for SB trigger)* |
 
@@ -296,8 +296,8 @@ Resolution order:
 
 ## 🧠 Cache Behavior
 - 🎯 **Scope**: Per Function instance (in-process `IMemoryCache`, not distributed).
-- ⏱️ **Sliding Expiration**: 2h — entry stays alive as long as it’s accessed within this window.
-- ⏰ **Absolute Expiration**: 6h — hard upper bound regardless of access frequency.
+- ⏱️ **Sliding Expiration**: 2h - entry stays alive as long as it’s accessed within this window.
+- ⏰ **Absolute Expiration**: 6h - hard upper bound regardless of access frequency.
 - 💾 **RAM Budget**: Cache `SizeLimit` is computed as `CacheMemoryBudgetPercent` of total available memory.
 - 📏 **Entry Size**: Each entry’s `Size` is set to `CacheEntrySizeBytes` (128 bytes default).
 - 🗑️ **Invalidation**: On upsert/resolve failure with a cached GUID, the cache key is evicted and a single fresh re-resolve is attempted.
@@ -321,7 +321,7 @@ All Dataverse I/O (Create, Update, RetrieveMultiple) goes through a unified resi
 - ✂️ Normalized server-side: `Trim().ToUpperInvariant()`.
 - 🔀 Identical `UpsertKey` values are **serialized** (keyed `SemaphoreSlim(1,1)`), preventing race conditions on the same record.
 - 🚀 Different `UpsertKey` values run fully in parallel.
-- ℹ️ Identical payloads are NOT deduplicated — each is processed and serialized by key.
+- ℹ️ Identical payloads are NOT deduplicated - each is processed and serialized by key.
 
 ---
 
@@ -388,11 +388,11 @@ dotnet test TESTS/ --collect:"XPlat Code Coverage"
 | `DependencyInjection` | 3 | Full DI container validation |
 
 ### Test Stack
-- **xUnit 2.9.2** — test framework
-- **Moq 4.20.72** — mocking
-- **FluentAssertions 6.12.2** — assertion library
-- **FakeXrmEasy.v9 3.8.0** — in-memory Dataverse (RPL-1.5 license)
-- **coverlet.collector 6.0.2** — code coverage
+- **xUnit 2.9.2** - test framework
+- **Moq 4.20.72** - mocking
+- **FluentAssertions 6.12.2** - assertion library
+- **FakeXrmEasy.v9 3.8.0** - in-memory Dataverse (RPL-1.5 license)
+- **coverlet.collector 6.0.2** - code coverage
 
 ---
 
@@ -471,5 +471,5 @@ $reportPath = ".\reports\loadtest-$timestamp.json"
 
 ## 📝 Notes
 - 🚀 This design can scale to millions of requests, within Dataverse limits. Add a queue-throttling layer (Azure Front Door / API Management) for further protection.
-- 🧠 Cache is scoped per Function App instance — no distributed cache. Consider Redis if multi-instance consistency is critical.
+- 🧠 Cache is scoped per Function App instance - no distributed cache. Consider Redis if multi-instance consistency is critical.
 - ℹ️ All clients must include `UpsertKey` in payloads and lookups.
