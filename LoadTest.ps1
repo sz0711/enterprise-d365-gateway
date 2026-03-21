@@ -9,15 +9,27 @@ param(
 
     [Parameter(Mandatory=$false)]
     [ValidateRange(1, 200)]
-    [int]$ThreadCount = 10,
+    [int]$ThreadCount = 6,
 
     [Parameter(Mandatory=$false)]
     [ValidateRange(1, 100000)]
-    [int]$RequestsPerThread = 100,
+    [int]$RequestsPerThread = 80,
 
     [Parameter(Mandatory=$false)]
     [ValidateRange(1, 100)]
-    [int]$BatchSize = 5,
+    [int]$BatchSize = 3,
+
+    [Parameter(Mandatory=$false)]
+    [ValidateRange(0, 5000)]
+    [int]$ThreadRampUpMs = 500,
+
+    [Parameter(Mandatory=$false)]
+    [ValidateRange(0, 5000)]
+    [int]$InterRequestDelayMs = 250,
+
+    [Parameter(Mandatory=$false)]
+    [ValidateRange(0, 5000)]
+    [int]$InterRequestJitterMs = 250,
 
     [Parameter(Mandatory=$false)]
     [ValidateRange(1, 300)]
@@ -62,6 +74,8 @@ Write-Host "Target URL: $FunctionUrl"
 Write-Host "Request timeout: $RequestTimeoutSeconds seconds"
 Write-Host "Lookup probability: $LookupProbabilityPercent%"
 Write-Host "Duplicate burst size: $DuplicateBurstSize"
+Write-Host "Thread ramp-up: $ThreadRampUpMs ms"
+Write-Host "Inter-request delay: $InterRequestDelayMs ms (+ jitter up to $InterRequestJitterMs ms)"
 Write-Host "Include negative tests: $IncludeNegativeTests"
 Write-Host ""
 
@@ -71,7 +85,7 @@ $startTime = Get-Date
 $jobs = @()
 for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
     $job = Start-Job -ScriptBlock {
-        param($Url, $Key, $ThreadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests)
+        param($Url, $Key, $ThreadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests, $InterRequestDelayMs, $InterRequestJitterMs)
 
         # Function to generate random payload (defined inside job)
         function New-RandomPayload {
@@ -227,6 +241,11 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
 
                     $results += $result
 
+                    if ($InterRequestDelayMs -gt 0 -or $InterRequestJitterMs -gt 0) {
+                        $jitter = if ($InterRequestJitterMs -gt 0) { Get-Random -Minimum 0 -Maximum ($InterRequestJitterMs + 1) } else { 0 }
+                        Start-Sleep -Milliseconds ($InterRequestDelayMs + $jitter)
+                    }
+
                     # Progress update every 10 requests
                     if (($i + 1) % 10 -eq 0) {
                         Write-Host "Thread $ThreadId completed $(($i + 1) * $BatchSize) payloads"
@@ -242,8 +261,12 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
 
         # Execute the function
         Send-BatchRequest -Url $Url -Key $Key -ThreadId $ThreadId -RequestsPerThread $RequestsPerThread -BatchSize $BatchSize
-    } -ArgumentList $FunctionUrl, $FunctionKey, $threadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests.IsPresent
+    } -ArgumentList $FunctionUrl, $FunctionKey, $threadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests.IsPresent, $InterRequestDelayMs, $InterRequestJitterMs
     $jobs += $job
+
+    if ($ThreadRampUpMs -gt 0 -and $threadId -lt ($ThreadCount - 1)) {
+        Start-Sleep -Milliseconds $ThreadRampUpMs
+    }
 }
 
 # Wait for all jobs to complete

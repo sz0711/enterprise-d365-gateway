@@ -22,6 +22,7 @@ public class EntityUpsertExecutorTests
         MaxRequestsPerSecond = 1000,
         MaxRetries = 1,
         RetryBaseDelayMs = 50,
+        RateLimitRetryDelaySeconds = 1,
         TimeoutPerOperationSeconds = 30,
         CircuitBreakerFailureThreshold = 10,
         CircuitBreakerSamplingDurationSeconds = 60,

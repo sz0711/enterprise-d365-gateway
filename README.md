@@ -356,7 +356,7 @@ Dataverse__BypassPluginStepIds__contact=a1b2c3d4-...
 
 ## 🧪 Testing
 
-**113 tests total**, all passing.
+**115 tests total**, all passing.
 
 ```powershell
 # Run all tests
@@ -423,17 +423,23 @@ A PowerShell script `LoadTest.ps1` (repository root) is provided for load testin
 # Advanced usage with custom parameters
 .\LoadTest.ps1 -FunctionUrl "https://your-function.azurewebsites.net/api/upsert" `
               -FunctionKey "your-function-key" `
-              -ThreadCount 20 `
-              -RequestsPerThread 50 `
-              -BatchSize 10
+              -ThreadCount 8 `
+              -RequestsPerThread 40 `
+              -BatchSize 3 `
+              -ThreadRampUpMs 500 `
+              -InterRequestDelayMs 250 `
+              -InterRequestJitterMs 250
 ```
 
 Parameters:
 - `FunctionUrl`: The URL of the upsert endpoint (required)
 - `FunctionKey`: Azure Function key for authentication (optional)
-- `ThreadCount`: Number of parallel threads (default: 10)
-- `RequestsPerThread`: Number of requests per thread (default: 100)
-- `BatchSize`: Number of payloads per request (default: 5)
+- `ThreadCount`: Number of parallel threads (default: 6)
+- `RequestsPerThread`: Number of requests per thread (default: 80)
+- `BatchSize`: Number of payloads per request (default: 3)
+- `ThreadRampUpMs`: Delay before starting next thread (default: 500)
+- `InterRequestDelayMs`: Base delay between requests per thread in ms (default: 250)
+- `InterRequestJitterMs`: Additional random delay per request in ms (default: 250)
 - `RequestTimeoutSeconds`: Per-request timeout in seconds (default: 60)
 - `LookupProbabilityPercent`: Chance of including a lookup per payload (default: 100)
 - `DuplicateBurstSize`: Number of identical payloads to burst (default: 0 = off)
@@ -450,9 +456,9 @@ The script generates random account data with `KeyAttributes` and reports:
 ```powershell
 # Save a report with fixed filename
 .\LoadTest.ps1 -FunctionUrl "http://localhost:7071/api/upsert" `
-              -ThreadCount 10 `
-              -RequestsPerThread 100 `
-              -BatchSize 5 `
+              -ThreadCount 6 `
+              -RequestsPerThread 80 `
+              -BatchSize 3 `
               -ReportPath ".\reports\loadtest-latest.json"
 
 # Save a report with timestamped filename
@@ -460,9 +466,12 @@ $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $reportPath = ".\reports\loadtest-$timestamp.json"
 
 .\LoadTest.ps1 -FunctionUrl "http://localhost:7071/api/upsert" `
-              -ThreadCount 20 `
-              -RequestsPerThread 50 `
-              -BatchSize 10 `
+              -ThreadCount 8 `
+              -RequestsPerThread 40 `
+              -BatchSize 3 `
+              -ThreadRampUpMs 500 `
+              -InterRequestDelayMs 250 `
+              -InterRequestJitterMs 250 `
               -DuplicateBurstSize 5 `
               -IncludeNegativeTests `
               -ReportPath $reportPath
