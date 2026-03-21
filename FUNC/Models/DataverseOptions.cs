@@ -71,6 +71,13 @@ namespace enterprise_d365_gateway.Models
         [Range(5, 300)]
         public int LookupTimeoutSeconds { get; set; } = 60;
 
+        // Request limits
+        [Range(1, 10_000)]
+        public int MaxBatchItems { get; set; } = 1000;
+
+        [Range(1024, 50 * 1024 * 1024)]
+        public long MaxRequestBytes { get; set; } = 10 * 1024 * 1024; // 10 MB
+
         // Plugin bypass
         /// <summary>
         /// Per-entity map of plugin step registration GUIDs to bypass.

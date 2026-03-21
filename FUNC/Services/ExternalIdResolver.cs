@@ -47,7 +47,7 @@ namespace enterprise_d365_gateway.Services
             var query = new QueryExpression(entityLogicalName)
             {
                 ColumnSet = new ColumnSet(false),
-                TopCount = 2,
+                TopCount = 3,
                 Criteria = new FilterExpression(LogicalOperator.And)
             };
             foreach (var keyAttribute in keyAttributes)
@@ -75,8 +75,12 @@ namespace enterprise_d365_gateway.Services
 
             if (results.Entities.Count > 1)
             {
+                _logger.LogError(
+                    "DuplicateKeyAttributesDetected. Entity={Entity}, Signature={Signature}, MatchCount={MatchCount}",
+                    entityLogicalName, keySignature, results.Entities.Count);
+
                 throw new InvalidOperationException(
-                    $"Multiple '{entityLogicalName}' records found for KeyAttributes '{keySignature}'.");
+                    $"Multiple '{entityLogicalName}' records ({results.Entities.Count}+) found for KeyAttributes '{keySignature}'.");
             }
 
             var existingId = results.Entities.FirstOrDefault()?.Id;

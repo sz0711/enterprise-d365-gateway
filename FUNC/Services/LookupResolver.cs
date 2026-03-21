@@ -60,7 +60,7 @@ namespace enterprise_d365_gateway.Services
                 var query = new QueryExpression(lookupDef.EntityLogicalName)
                 {
                     ColumnSet = new ColumnSet(false),
-                    TopCount = 2,
+                    TopCount = 3,
                     Criteria = new FilterExpression(LogicalOperator.And)
                 };
 
@@ -91,8 +91,12 @@ namespace enterprise_d365_gateway.Services
 
                 if (results.Entities.Count > 1)
                 {
+                    _logger.LogError(
+                        "DuplicateLookupDetected. Attribute={Attribute}, Entity={Entity}, Signature={Signature}, MatchCount={MatchCount}, Depth={Depth}",
+                        attributeName, lookupDef.EntityLogicalName, cycleKey, results.Entities.Count, currentDepth);
+
                     throw new InvalidOperationException(
-                        $"Lookup resolution for '{attributeName}': multiple '{lookupDef.EntityLogicalName}' records match the alternate key.");
+                        $"Lookup resolution for '{attributeName}': {results.Entities.Count}+ '{lookupDef.EntityLogicalName}' records match the alternate key.");
                 }
 
                 if (results.Entities.Count == 1)

@@ -2,6 +2,7 @@ using System.Net;
 using FluentAssertions;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 using enterprise_d365_gateway.Functions;
 using enterprise_d365_gateway.Interfaces;
@@ -21,7 +22,7 @@ public class HttpUpsertTriggerIntegrationTests
     public HttpUpsertTriggerIntegrationTests()
     {
         _contextMock.SetupGet(c => c.CancellationToken).Returns(CancellationToken.None);
-        _sut = new HttpUpsertTrigger(_upsertServiceMock.Object, _resultMapperMock.Object, _loggerMock.Object);
+        _sut = new HttpUpsertTrigger(_upsertServiceMock.Object, _resultMapperMock.Object, _loggerMock.Object, Options.Create(new DataverseOptions()));
     }
 
     private FakeHttpRequestData CreateRequest(string body)

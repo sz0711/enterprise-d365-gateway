@@ -107,7 +107,7 @@ public class LookupResolverTests
         var act = async () => await _sut.ResolveAsync("primarycontactid", lookup, 0, 3, visited);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*multiple*");
+            .WithMessage("*2+*records match*");
     }
 
     [Fact]

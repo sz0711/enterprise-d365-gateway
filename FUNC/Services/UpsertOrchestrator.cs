@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Xrm.Sdk;
@@ -8,6 +9,7 @@ namespace enterprise_d365_gateway.Services
 {
     public class UpsertOrchestrator : IDataverseUpsertService
     {
+        private static readonly ActivitySource ActivitySource = new("enterprise-d365-gateway.UpsertOrchestrator");
         private readonly IRequestValidator _validator;
         private readonly IEarlyboundEntityMapper _mapper;
         private readonly IExternalIdResolver _externalIdResolver;
@@ -62,6 +64,9 @@ namespace enterprise_d365_gateway.Services
             if (requestList.Count == 0)
                 return Array.Empty<UpsertResult>();
 
+            using var activity = ActivitySource.StartActivity("UpsertBatch");
+            activity?.SetTag("batch.size", requestList.Count);
+
             var results = new UpsertResult[requestList.Count];
             var effectiveParallelism = _concurrencyLimiter.CurrentLimit;
             var options = new ParallelOptions
@@ -71,7 +76,7 @@ namespace enterprise_d365_gateway.Services
             };
 
             _logger.LogInformation(
-                "Starting batch upsert. Total={Total}, Parallelism={Parallelism}",
+                "BatchUpsertStarted. Total={Total}, Parallelism={Parallelism}",
                 requestList.Count, effectiveParallelism);
 
             await Parallel.ForEachAsync(
@@ -83,7 +88,17 @@ namespace enterprise_d365_gateway.Services
                 });
 
             var failures = results.Count(r => r.ErrorCategory != ErrorCategory.None);
-            _logger.LogInformation("Batch upsert completed. Total={Total}, Failed={Failed}", results.Length, failures);
+            var validationFailures = results.Count(r => r.ErrorCategory == ErrorCategory.Validation);
+            var technicalFailures = failures - validationFailures;
+
+            activity?.SetTag("batch.failed", failures);
+            activity?.SetTag("batch.validation_failed", validationFailures);
+            activity?.SetTag("batch.technical_failed", technicalFailures);
+            if (failures > 0) activity?.SetStatus(ActivityStatusCode.Error);
+
+            _logger.LogInformation(
+                "BatchUpsertCompleted. Total={Total}, Failed={Failed}, ValidationFailed={ValidationFailed}, TechnicalFailed={TechnicalFailed}",
+                results.Length, failures, validationFailures, technicalFailures);
 
             return results;
         }

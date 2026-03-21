@@ -98,11 +98,25 @@ public class DataverseValueNormalizerTests
     }
 
     [Fact]
-    public void Normalize_JsonObject_ReturnsRawText()
+    public void Normalize_JsonObject_ReturnsDictionary()
     {
-        var element = JsonElementFactory.FromObject(new { name = "test" });
+        var element = JsonElementFactory.FromObject(new { name = "test", value = 42 });
         var result = DataverseValueNormalizer.Normalize(element);
-        result.Should().BeOfType<string>();
-        ((string)result!).Should().Contain("\"name\"");
+        result.Should().BeAssignableTo<IDictionary<string, object?>>();
+        var dict = (IDictionary<string, object?>)result!;
+        dict["name"].Should().Be("test");
+        dict["value"].Should().Be(42);
+    }
+
+    [Fact]
+    public void Normalize_NestedJsonObject_RecursivelyNormalizes()
+    {
+        var element = JsonElementFactory.FromObject(new { outer = new { inner = "deep" } });
+        var result = DataverseValueNormalizer.Normalize(element);
+        result.Should().BeAssignableTo<IDictionary<string, object?>>();
+        var outer = (IDictionary<string, object?>)result!;
+        outer["outer"].Should().BeAssignableTo<IDictionary<string, object?>>();
+        var inner = (IDictionary<string, object?>)outer["outer"]!;
+        inner["inner"].Should().Be("deep");
     }
 }

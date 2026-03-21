@@ -22,7 +22,8 @@ namespace enterprise_d365_gateway.Services
                 JsonValueKind.Number when element.TryGetDecimal(out var decimalValue) => decimalValue,
                 JsonValueKind.Number when element.TryGetDouble(out var doubleValue) => doubleValue,
                 JsonValueKind.Array => element.EnumerateArray().Select(e => Normalize(e)).ToArray(),
-                JsonValueKind.Object => element.GetRawText(),
+                JsonValueKind.Object => element.EnumerateObject()
+                    .ToDictionary(p => p.Name, p => Normalize(p.Value)),
                 _ => element.ToString()
             };
         }

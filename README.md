@@ -8,7 +8,7 @@
 
 | Feature | Status | Details |
 |---|---|---|
-| 🔀 SOLID Architecture | ✅ Done | 8 interfaces, 10 services, `UpsertOrchestrator` pipeline |
+| 🔀 SOLID Architecture | ✅ Done | 9 interfaces, 11 services, `UpsertOrchestrator` pipeline |
 | 📝 Contracts | ✅ Done | `KeyAttributes`, `ErrorCategory`, `NestedLookups`, `LookupTraces` |
 | 🔍 Recursive Lookup Resolution | ✅ Done | Cycle detection, configurable depth, `CreateIfNotExists` |
 | 🧠 In-Memory Cache | ✅ Done | `IMemoryCache` with sliding/absolute TTL, RAM-based `SizeLimit` |
@@ -17,13 +17,17 @@
 | ⚡ Rate Limiting | ✅ Done | Token bucket per Dataverse API call |
 | 📈 Adaptive Concurrency | ✅ Done | AIMD algorithm: halve on 429, increment after sustained success |
 | 🚫 Plugin Step Bypass | ✅ Done | `BypassBusinessLogicExecutionStepIds` per entity |
-| 🌐 HTTP Trigger | ✅ Done | `POST /api/upsert` with batch support |
-| 📨 Service Bus Trigger | ✅ Done | Queue-driven upsert processing |
+| 🌐 HTTP Trigger | ✅ Done | `POST /api/upsert` with batch support, size & count guards |
+| 📨 Service Bus Trigger | ✅ Done | Queue-driven upsert processing with correlation tracking |
 | 🏷️ Early-bound Validation | ✅ Done | `MODEL` assembly reflection for entity/attribute mapping |
 | 🔐 Managed Identity Auth | ✅ Done | User-assigned managed identity via `ServiceClient` |
+| 💚 Health Endpoints | ✅ Done | `GET /health/live` (liveness) + `GET /health/ready` (readiness) |
+| 🛡️ Input Guards | ✅ Done | `MaxRequestBytes` (413), `MaxBatchItems` (400), JSON depth limit |
+| 🔎 Distributed Tracing | ✅ Done | `ActivitySource` spans in orchestrator, structured events in triggers |
+| ✅ Startup Validation | ✅ Done | HTTPS scheme check, range validation for all limits via `ValidateOnStart` |
 | 📈 Load Test Script | ✅ Done | Multi-threaded PowerShell with p50/p95/p99 reporting |
 | 📖 Documentation | ✅ Done | Full README, config table, JSON examples |
-| 🪧 Unit Tests | ✅ Done | 103 xUnit tests - all 10 services fully covered |
+| 🪧 Unit Tests | ✅ Done | 104 xUnit tests - all 11 services fully covered |
 | 🧪 Integration Tests | ✅ Done | 22 tests - FakeXrmEasy v9, HTTP trigger, ServiceBus trigger, DI |
 
 ---
@@ -31,8 +35,8 @@
 ## 🏗️ Overview
 
 This repository implements:
-- ⚡ **HTTP trigger** (`DataverseUpsertHttp`) - incoming UPSERT requests in batch format
-- 📨 **Service Bus trigger** (`DataverseUpsertServiceBus`) - reliable queue-driven UPSERT processing
+- ⚡ **HTTP trigger** (`DataverseUpsertHttp`) - incoming UPSERT requests in batch format with body size & batch count guards
+- 📨 **Service Bus trigger** (`DataverseUpsertServiceBus`) - reliable queue-driven UPSERT processing with correlation tracking
 - 🔀 **SOLID-decomposed pipeline** - clearly separated responsibilities (validation → lookup → execution → classification)
 - 🔍 **Recursive lookup resolution** - configurable max depth, cycle detection, per-lookup `CreateIfNotExists`
 - 🧠 **KeyAttributes→Guid in-memory cache** - per instance with sliding/absolute TTL and RAM-based size limits
@@ -44,6 +48,10 @@ This repository implements:
 - ⚡ **Rate limiting** (token bucket) and configurable degree-of-parallelism
 - 📈 **Adaptive concurrency** (AIMD) - automatically halves parallelism on 429 throttling, recovers after sustained success
 - 🏷️ **Early-bound entity validation** and conversion via `MODEL` assembly
+- 💚 **Health endpoints** - `/health/live` (liveness) + `/health/ready` (Dataverse connectivity readiness)
+- 🛡️ **Input guards** - configurable `MaxRequestBytes` (413) and `MaxBatchItems` (400) with JSON depth limit
+- 🔎 **Distributed tracing** - `ActivitySource` spans in orchestrator, standardized structured events in all triggers
+- ✅ **Startup validation** - HTTPS scheme enforcement, `[Range]` + custom `Validate()` rules via `ValidateOnStart`
 
 ---
 
@@ -73,6 +81,7 @@ This repository implements:
 | �🔒 | `IUpsertLockCoordinator` | Keyed `SemaphoreSlim(1,1)` per normalized KeyAttributes signature |
 | 🚨 | `IErrorClassifier` | Exception → `ErrorCategory` mapping |
 | 📤 | `IResultMapper` | UpsertResult construction + batch HTTP status code determination |
+| 💚 | `IHealthCheckService` | Liveness + readiness health checks (Dataverse connectivity) |
 | 🎯 | `UpsertOrchestrator` | Thin pipeline coordinating all above services |
 
 ### 📂 Project Structure
@@ -80,17 +89,17 @@ This repository implements:
 ```
 FUNC/
 ├── 📁 Extensions/          → DI registration (DataverseServiceCollectionExtensions.cs)
-├── 📁 Functions/            → HTTP + ServiceBus triggers
-├── 📁 Interfaces/           → 8 service interfaces
+├── 📁 Functions/            → HTTP + ServiceBus + Health triggers
+├── 📁 Interfaces/           → 9 service interfaces (incl. IHealthCheckService)
 ├── 📁 Models/               → DataverseOptions, UpsertContracts, ErrorCategory
-├── 📁 Services/             → 10 service implementations
-├── 📄 Program.cs            → Host builder + DI setup
+├── 📁 Services/             → 11 service implementations (incl. HealthCheckService)
+├── 📄 Program.cs            → Host builder + DI setup + startup validation
 MODEL/
 ├── 📁 Model/Entities/       → Early-bound entity classes (account, contact)
 ├── 📁 Model/OptionSets/     → OptionSet enums
 └── 📁 Scripts/              → Code generation scripts
 TESTS/
-├── 📁 Unit/                 → 103 unit tests (all 10 services)
+├── 📁 Unit/                 → 104 unit tests (all 11 services)
 ├── 📁 Integration/          → 22 integration tests (FakeXrmEasy, triggers, DI)
 └── 📄 enterprise-d365-gateway.Tests.csproj
 ```
@@ -124,6 +133,8 @@ TESTS/
 | `Dataverse__CacheEntrySizeBytes` | Estimated size per cache entry | `128` |
 | `Dataverse__MaxLookupDepth` | Global max recursive lookup depth | `3` |
 | `Dataverse__LookupTimeoutSeconds` | Timeout budget per lookup tree | `60` |
+| `Dataverse__MaxBatchItems` | Maximum payloads per single request | `1000` |
+| `Dataverse__MaxRequestBytes` | Maximum request body size in bytes | `10485760` (10 MB) |
 | `Dataverse__BypassPluginStepIds__<entity>` | Comma-separated plugin step registration GUIDs to bypass for `<entity>` | *(empty - no bypass)* |
 | `ServiceBusConnection` | Azure Service Bus connection string | *(required for SB trigger)* |
 | `ServiceBusQueueName` | Queue name | *(required for SB trigger)* |
@@ -160,6 +171,8 @@ Add the following to `FUNC/local.settings.json` (replace `Dataverse:Url` with yo
     "Dataverse:CacheMemoryBudgetMinMb": "64",
     "Dataverse:CacheMemoryBudgetMaxMb": "512",
     "Dataverse:CacheEntrySizeBytes": "128",
+    "Dataverse:MaxBatchItems": "1000",
+    "Dataverse:MaxRequestBytes": "10485760",
     "Dataverse:BypassPluginStepIds:account": "",
     "Dataverse:BypassPluginStepIds:contact": "",
 
@@ -420,9 +433,62 @@ Dataverse__BypassPluginStepIds__contact=a1b2c3d4-...
 
 ---
 
+## 💚 Health Endpoints
+
+Two HTTP health check endpoints for container orchestrators, load balancers, and monitoring:
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /health/live` | Anonymous | **Liveness** - returns `200` if the process is running, `503` otherwise |
+| `GET /health/ready` | Function Key | **Readiness** - validates Dataverse `ServiceClient` connectivity |
+
+### Readiness Response
+```json
+{
+  "Status": "Healthy",
+  "Checks": {
+    "DataverseConnection": {
+      "Status": "Healthy",
+      "Detail": null
+    }
+  }
+}
+```
+
+If Dataverse is unreachable, returns `503` with `"Status": "Unhealthy"` and `Detail` containing the error message.
+
+---
+
+## 🔎 Distributed Tracing
+
+The gateway emits structured `System.Diagnostics.Activity` spans and events for correlation across the pipeline:
+
+| Source | Span/Event | Tags |
+|---|---|---|
+| `UpsertOrchestrator` | `UpsertBatch` span | `batch.size`, `batch.failed`, `batch.validation_failed`, `batch.technical_failed` |
+| `HttpUpsertTrigger` | Structured log events | `CorrelationId`, `BatchSize`, status codes |
+| `ServiceBusUpsertTrigger` | `ServiceBusUpsertReceived/Succeeded/Failed/Exception` | `CorrelationId`, `BatchSize`, failure counts |
+
+ActivitySource name: `enterprise-d365-gateway.UpsertOrchestrator`
+
+---
+
+## ✅ Startup Validation
+
+Configuration is validated at startup via `ValidateDataAnnotations()` + custom `Validate()` rules + `ValidateOnStart()`:
+
+- 🔒 `Dataverse:Url` must use `https://` scheme
+- 📏 `MaxRequestBytes` must be ≥ 1024
+- 📏 `MaxBatchItems` must be ≥ 1
+- 📊 All `[Range]` annotations on `DataverseOptions` are enforced
+
+Invalid configuration prevents the Function App from starting, providing a clear error message.
+
+---
+
 ## 🧪 Testing
 
-**125 tests total**, all passing.
+**126 tests total**, all passing.
 
 ```powershell
 # Run all tests
@@ -432,11 +498,11 @@ dotnet test TESTS/ --verbosity normal
 dotnet test TESTS/ --collect:"XPlat Code Coverage"
 ```
 
-### Unit Tests (103)
+### Unit Tests (104)
 | Service | Tests |
 |---|---|
 | `ErrorClassifier` | 14 |
-| `DataverseValueNormalizer` | 13 |
+| `DataverseValueNormalizer` | 14 |
 | `RequestValidator` | 12 |
 | `AdaptiveConcurrencyLimiter` | 10 |
 | `LookupResolver` | 10 |
@@ -473,7 +539,8 @@ dotnet test TESTS/ --collect:"XPlat Code Coverage"
 
 ## 📡 Response Behavior
 - ✅ `200 OK`: all payloads processed successfully.
-- ⚠️ `400 Bad Request`: only validation failures (unknown attributes, type mismatch, missing KeyAttributes).
+- ⚠️ `400 Bad Request`: only validation failures (unknown attributes, type mismatch, missing KeyAttributes) or batch count exceeds `MaxBatchItems`.
+- 📏 `413 Payload Too Large`: request body exceeds `MaxRequestBytes`.
 - ❌ `500 Internal Server Error`: at least one technical failure occurred.
 
 ℹ️ Failure details are always returned per payload with `ErrorCategory`, `ErrorMessage`, and `ValidationErrors`.

@@ -63,6 +63,9 @@ namespace enterprise_d365_gateway.Extensions
             // Orchestrator (replaces DataverseUpsertService)
             services.AddSingleton<IDataverseUpsertService, UpsertOrchestrator>();
 
+            // Health
+            services.AddSingleton<IHealthCheckService, HealthCheckService>();
+
             return services;
         }
     }

@@ -86,7 +86,7 @@ public class ExternalIdResolverTests
         var act = async () => await _sut.ResolveAsync("account", keyAttributes);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*Multiple*");
+            .WithMessage("*Multiple*2+*");
     }
 
     [Fact]

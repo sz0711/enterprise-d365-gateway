@@ -21,7 +21,17 @@ namespace enterprise_d365_gateway.Functions
         public async Task RunAsync([ServiceBusTrigger("%ServiceBusQueueName%", Connection = "ServiceBusConnection")] string message, FunctionContext context)
         {
             var invocationId = context.InvocationId;
-            _logger.LogInformation("DataverseUpsertServiceBus message received. InvocationId={InvocationId}", invocationId);
+
+            // Attempt to extract correlation-id from binding data; fall back to invocationId.
+            string correlationId = invocationId;
+            if (context.BindingContext?.BindingData != null
+                && context.BindingContext.BindingData.TryGetValue("CorrelationId", out var cid)
+                && cid != null)
+            {
+                correlationId = cid.ToString()!;
+            }
+
+            _logger.LogInformation("ServiceBusUpsertReceived. InvocationId={InvocationId}, CorrelationId={CorrelationId}", invocationId, correlationId);
 
             UpsertBatchRequest? payload;
             try
@@ -43,16 +53,18 @@ namespace enterprise_d365_gateway.Functions
                     if (technicalFailures == 0)
                     {
                         _logger.LogWarning(
-                            "Service Bus upsert contains validation failures only. InvocationId={InvocationId}, Total={Total}, ValidationFailed={ValidationFailed}",
+                            "ServiceBusUpsertValidationOnly. InvocationId={InvocationId}, CorrelationId={CorrelationId}, Total={Total}, ValidationFailed={ValidationFailed}",
                             invocationId,
+                            correlationId,
                             results.Count,
                             validationFailures);
                         return;
                     }
 
                     _logger.LogError(
-                        "Service Bus upsert completed with technical failures. InvocationId={InvocationId}, Total={Total}, Failed={Failed}, ValidationFailed={ValidationFailed}, TechnicalFailed={TechnicalFailed}",
+                        "ServiceBusUpsertFailed. InvocationId={InvocationId}, CorrelationId={CorrelationId}, Total={Total}, Failed={Failed}, ValidationFailed={ValidationFailed}, TechnicalFailed={TechnicalFailed}",
                         invocationId,
+                        correlationId,
                         results.Count,
                         failures,
                         validationFailures,
@@ -61,7 +73,7 @@ namespace enterprise_d365_gateway.Functions
                     throw new InvalidOperationException($"Service Bus upsert failed for {technicalFailures} technical item(s).");
                 }
 
-                _logger.LogInformation("Service Bus upsert succeeded. InvocationId={InvocationId}, Total={Total}", invocationId, results.Count);
+                _logger.LogInformation("ServiceBusUpsertSucceeded. InvocationId={InvocationId}, CorrelationId={CorrelationId}, Total={Total}", invocationId, correlationId, results.Count);
             }
             catch (JsonException ex)
             {
@@ -70,7 +82,7 @@ namespace enterprise_d365_gateway.Functions
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed processing ServiceBus upsert message. InvocationId={InvocationId}", invocationId);
+                _logger.LogError(ex, "ServiceBusUpsertException. InvocationId={InvocationId}, CorrelationId={CorrelationId}", invocationId, correlationId);
                 throw;
             }
         }
