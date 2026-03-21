@@ -130,7 +130,55 @@ TESTS/
 
 ---
 
-## 📋 JSON Contract
+## � Local Settings Configuration
+
+Add the following to `FUNC/local.settings.json` (replace `Dataverse:Url` with your actual Dataverse organization URL):
+
+```json
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "Functions:Worker:HostEndpoint": "http://localhost:7071",
+
+    "Dataverse:Url": "https://your-org.crm4.dynamics.com/",
+    "Dataverse:UserAssignedManagedIdentityClientId": "",
+    "Dataverse:MaxRequestsPerSecond": "120",
+    "Dataverse:MaxDegreeOfParallelism": "4",
+    "Dataverse:MinDegreeOfParallelism": "1",
+    "Dataverse:AdaptiveConcurrencyEnabled": "true",
+    "Dataverse:AdaptiveConcurrencySuccessThreshold": "20",
+    "Dataverse:MaxRetries": "4",
+    "Dataverse:RetryBaseDelayMs": "300",
+    "Dataverse:RateLimitRetryDelaySeconds": "180",
+    "Dataverse:TimeoutPerOperationSeconds": "45",
+    "Dataverse:CircuitBreakerFailureThreshold": "8",
+    "Dataverse:CircuitBreakerSamplingDurationSeconds": "60",
+    "Dataverse:CircuitBreakerBreakDurationSeconds": "45",
+    "Dataverse:CacheMemoryBudgetPercent": "20",
+    "Dataverse:CacheMemoryBudgetMinMb": "64",
+    "Dataverse:CacheMemoryBudgetMaxMb": "512",
+    "Dataverse:CacheEntrySizeBytes": "128",
+    "Dataverse:BypassPluginStepIds:account": "",
+    "Dataverse:BypassPluginStepIds:contact": "",
+
+    "ServiceBusConnection": "Endpoint=sb://your-servicebus-namespace.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=YOUR_KEY",
+    "ServiceBusQueueName": "dataverse-upsert-queue",
+
+    "APPLICATIONINSIGHTS_CONNECTION_STRING": ""
+  },
+  "Host": {
+    "LocalHttpPort": 7071,
+    "CORS": "*",
+    "CORSCredentials": false
+  }
+}
+```
+
+---
+
+## �📋 JSON Contract
 
 ### 📄 Simple Upsert
 ```json
