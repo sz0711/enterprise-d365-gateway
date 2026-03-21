@@ -1,0 +1,22 @@
+{
+  "suppressINotifyPattern": false,
+  "suppressGeneratedCodeAttribute": false,
+  "language": "CS",
+  "namespace": "MODEL",
+  "serviceContextName": "OrgContext",
+  "generateSdkMessages": true,
+  "generateGlobalOptionSets": false,
+  "emitFieldsClasses": true,
+  "entityTypesFolder": "Entities",
+  "messagesTypesFolder": "Messages",
+  "optionSetsTypesFolder": "OptionSets",
+  "entityNamesFilter": [
+    "account",
+    "contact"
+  ],
+  "messageNamesFilter": [
+    "examp_*"
+  ],
+  "emitEntityETC": false,
+  "emitVirtualAttributes": true
+}

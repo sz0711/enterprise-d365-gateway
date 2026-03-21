@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "enterprise-d365-gateway", "FUNC\enterprise-d365-gateway.csproj", "{D7A9FCF9-A8BD-4F58-05C7-0437D7193B84}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Model", "MODEL\Model.csproj", "{19C7C86B-88DA-9A98-B57D-7FA23AB4DA69}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D7A9FCF9-A8BD-4F58-05C7-0437D7193B84}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D7A9FCF9-A8BD-4F58-05C7-0437D7193B84}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D7A9FCF9-A8BD-4F58-05C7-0437D7193B84}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D7A9FCF9-A8BD-4F58-05C7-0437D7193B84}.Release|Any CPU.Build.0 = Release|Any CPU
+		{19C7C86B-88DA-9A98-B57D-7FA23AB4DA69}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{19C7C86B-88DA-9A98-B57D-7FA23AB4DA69}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{19C7C86B-88DA-9A98-B57D-7FA23AB4DA69}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{19C7C86B-88DA-9A98-B57D-7FA23AB4DA69}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {80DA4C7C-F765-4A15-840E-4276D853342D}
+	EndGlobalSection
+EndGlobal

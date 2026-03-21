@@ -1,0 +1,103 @@
+# Build Results
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.nupkg
+*.snupkg
+*.dcproj
+
+# Visual Studio
+.vs/
+.vscode/
+*.user
+*.userosscache
+*.sln.docstates
+*.sln.iml
+
+# Output folder used by projects
+out/
+publish/
+
+# MSBuild Related Files
+*.log
+*.suo
+*.csproj.user
+*.csproj.locks
+*.DotSettings
+*.DotSettings.user
+
+# NuGet Related Files
+*.nupkg
+*.nupkg.sha512
+.nuget/
+project.lock.json
+project.assets.json
+launchSettings.json
+
+# Test Results
+TestResults/
+*.trx
+.coverage
+coverage.opencover.xml
+
+# IDE Specific Files
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Rider
+.idea/
+*.sln.iml
+riderModule.iml
+
+# ReSharper
+_ReSharper*/
+*.DotSettings
+.resharper
+
+# Code coverage
+coverage/
+OpenCover/
+
+# Temp files
+*.tmp
+*.bak
+*.backup
+~*
+
+# Local Environment Variables
+.env
+.env.local
+appsettings.local.json
+local.settings.json
+
+# Package directories
+packages/
+!packages/repositories.config
+
+# Misc
+*.vs/
+*.cache
+*.orig
+
+# OS Specific
+.DS_Store
+.AppleDouble
+.LSOverride
+*.cab
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# Visual Studio Code extensions
+.vscode/extensions/
+
+# npm related (if applicable)
+node_modules/
+npm-debug.log
+yarn-error.log
