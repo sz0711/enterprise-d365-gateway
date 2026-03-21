@@ -8,6 +8,7 @@ using Polly;
 using Polly.CircuitBreaker;
 using Polly.Retry;
 using Polly.Timeout;
+using System.ServiceModel;
 using enterprise_d365_gateway.Interfaces;
 using enterprise_d365_gateway.Models;
 
@@ -50,6 +51,7 @@ namespace enterprise_d365_gateway.Services
                     ShouldHandle = new PredicateBuilder()
                         .Handle<TimeoutException>()
                         .Handle<HttpRequestException>()
+                        .Handle<ProtocolException>(IsRateLimitException)
                         .Handle<TimeoutRejectedException>()
                         .Handle<InvalidOperationException>(ex =>
                             ex.Message.Contains("response is empty", StringComparison.OrdinalIgnoreCase)
@@ -57,7 +59,7 @@ namespace enterprise_d365_gateway.Services
                             || IsRateLimitException(ex))
                         .Handle<AggregateException>(ex =>
                             ex.InnerException is TimeoutException or HttpRequestException
-                            || IsRateLimitException(ex.InnerException)),
+                            || IsRateLimitException(ex)),
                     OnRetry = args =>
                     {
                         _logger.LogWarning(
@@ -77,12 +79,13 @@ namespace enterprise_d365_gateway.Services
                     ShouldHandle = new PredicateBuilder()
                         .Handle<TimeoutException>()
                         .Handle<HttpRequestException>()
+                        .Handle<ProtocolException>(IsRateLimitException)
                         .Handle<TimeoutRejectedException>()
                         .Handle<InvalidOperationException>(ex =>
                             ex.Message.Contains("response is empty", StringComparison.OrdinalIgnoreCase)
                             || ex.Message.Contains("ThrowIfResponseIsEmpty", StringComparison.OrdinalIgnoreCase)
                             || IsRateLimitException(ex))
-                        .Handle<AggregateException>(ex => IsRateLimitException(ex.InnerException)),
+                        .Handle<AggregateException>(IsRateLimitException),
                     OnOpened = args =>
                     {
                         _logger.LogError(
@@ -199,21 +202,30 @@ namespace enterprise_d365_gateway.Services
                 return false;
             }
 
-            if (exception is AggregateException aggregate && aggregate.InnerException != null)
+            if (IsRateLimitMessage(exception.Message))
             {
-                return IsRateLimitException(aggregate.InnerException);
+                return true;
             }
 
-            if (exception is InvalidOperationException invalidOperation)
+            if (exception is AggregateException aggregate)
             {
-                var message = invalidOperation.Message;
-                return message.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
-                    || message.Contains("too many requests", StringComparison.OrdinalIgnoreCase)
-                    || message.Contains("429", StringComparison.OrdinalIgnoreCase)
-                    || message.Contains("throttl", StringComparison.OrdinalIgnoreCase);
+                return aggregate.Flatten().InnerExceptions.Any(IsRateLimitException);
             }
 
-            return false;
+            return exception.InnerException is not null && IsRateLimitException(exception.InnerException);
+        }
+
+        private static bool IsRateLimitMessage(string? message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            return message.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("too many requests", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("429", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("throttl", StringComparison.OrdinalIgnoreCase);
         }
 
     }

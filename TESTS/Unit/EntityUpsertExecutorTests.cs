@@ -6,6 +6,7 @@ using Microsoft.Xrm.Sdk;
 using Microsoft.Xrm.Sdk.Messages;
 using Microsoft.Xrm.Sdk.Query;
 using Moq;
+using System.ServiceModel;
 using enterprise_d365_gateway.Interfaces;
 using enterprise_d365_gateway.Models;
 using enterprise_d365_gateway.Services;
@@ -158,5 +159,23 @@ public class EntityUpsertExecutorTests
             s => s.CreateAsync(entity, It.IsAny<CancellationToken>()), Times.Once);
         mockFactory.ServiceMock.Verify(
             s => s.ExecuteAsync(It.IsAny<OrganizationRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ProtocolException429_RetriesAndSucceeds()
+    {
+        var (sut, mockFactory) = CreateSut();
+        var expectedId = Guid.NewGuid();
+        var entity = new Entity("account");
+
+        mockFactory.ServiceMock
+            .SetupSequence(s => s.CreateAsync(It.IsAny<Entity>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ProtocolException("Der Remoteserver hat eine unerwartete Antwort zurückgegeben: (429)."))
+            .ReturnsAsync(expectedId);
+
+        var result = await sut.CreateAsync(entity);
+
+        result.Should().Be(expectedId);
+        mockFactory.ServiceMock.Verify(s => s.CreateAsync(entity, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 }

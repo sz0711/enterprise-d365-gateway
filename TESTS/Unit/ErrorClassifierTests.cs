@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Polly.CircuitBreaker;
 using Polly.Timeout;
+using System.ServiceModel;
 using enterprise_d365_gateway.Models;
 using enterprise_d365_gateway.Services;
 
@@ -57,6 +58,13 @@ public class ErrorClassifierTests
     public void Classify_InvalidOperationExceptionRateLimit_ReturnsThrottling()
     {
         _sut.Classify(new InvalidOperationException("Rate limit exceeded"))
+            .Should().Be(ErrorCategory.Throttling);
+    }
+
+    [Fact]
+    public void Classify_ProtocolException429_ReturnsThrottling()
+    {
+        _sut.Classify(new ProtocolException("Der Remoteserver hat eine unerwartete Antwort zurückgegeben: (429)."))
             .Should().Be(ErrorCategory.Throttling);
     }
 
