@@ -1,4 +1,5 @@
 # 🏢 enterprise-d365-gateway
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](#license)
 
 > 🔗 Enterprise-grade Azure Functions integration platform - seamless data synchronization between heterogeneous systems and Microsoft Dynamics 365 Customer Engagement.
 
