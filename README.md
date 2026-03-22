@@ -640,3 +640,15 @@ $reportPath = ".\reports\loadtest-$timestamp.json"
 - 🚀 This design can scale to millions of requests, within Dataverse limits. Add a queue-throttling layer (Azure Front Door / API Management) for further protection.
 - 🧠 Cache is scoped per Function App instance - no distributed cache. Consider Redis if multi-instance consistency is critical.
 - ℹ️ All clients must include `KeyAttributes` in payloads and lookups.
+--
+
+## ⚠️ Disclaimer
+
+This repository is a private project.
+
+It is provided without any warranty, guarantee, or representation of any kind.
+Use is entirely at your own risk. The author accepts no liability for direct or
+indirect damages, data loss, outages, or any other consequences resulting from
+the use of this project.
+
+--
