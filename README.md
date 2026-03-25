@@ -1,150 +1,117 @@
 # 🏢 enterprise-d365-gateway
+
+> Enterprise-grade Azure Functions integration platform — seamless data synchronization between heterogeneous systems and Microsoft Dynamics 365 Customer Engagement.
+
+[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](#license)
 
-> 🔗 Enterprise-grade Azure Functions integration platform - seamless data synchronization between heterogeneous systems and Microsoft Dynamics 365 Customer Engagement.
+---
+
+## Overview
+
+Azure Functions host exposing an **HTTP trigger** and a **Service Bus trigger** that accept batched UPSERT payloads and write them to Microsoft Dataverse, with resilience, concurrency control, caching, and early-bound entity validation built in.
+
+### Key Capabilities
+
+- **SOLID-decomposed pipeline** — 9 interfaces, 11 services, thin `UpsertOrchestrator`
+- **HTTP + Service Bus triggers** — batch UPSERT via `POST /api/upsert` or queue-driven processing
+- **Recursive lookup resolution** — configurable depth, cycle detection, `CreateIfNotExists`
+- **In-memory cache** — KeyAttributes→Guid with sliding/absolute TTL and RAM-based size limit
+- **Polly v8 resilience** — retry → circuit breaker → timeout pipeline for every Dataverse call
+- **Keyed concurrency control** — `SemaphoreSlim(1,1)` per normalized `KeyAttributes` signature
+- **Adaptive concurrency (AIMD)** — halve on 429, increment after sustained success
+- **Rate limiting** — token-bucket per Dataverse API call (`MaxRequestsPerSecond`)
+- **Early-bound validation** — `MODEL` assembly reflection for entity/attribute mapping
+- **Health endpoints** — `/health/live` (liveness) + `/health/ready` (Dataverse readiness)
+- **Input guards** — `MaxRequestBytes` (413), `MaxBatchItems` (400), JSON depth limit
+- **Distributed tracing** — `ActivitySource` spans and structured events in all triggers
+- **Startup validation** — HTTPS scheme, `[Range]` annotations, custom rules via `ValidateOnStart`
+- **Plugin step bypass** — `BypassBusinessLogicExecutionStepIds` per entity for bulk operations
 
 ---
 
-## 📊 Implementation Status
-
-| Feature | Status | Details |
-|---|---|---|
-| 🔀 SOLID Architecture | ✅ Done | 9 interfaces, 11 services, `UpsertOrchestrator` pipeline |
-| 📝 Contracts | ✅ Done | `KeyAttributes`, `ErrorCategory`, `NestedLookups`, `LookupTraces` |
-| 🔍 Recursive Lookup Resolution | ✅ Done | Cycle detection, configurable depth, `CreateIfNotExists` |
-| 🧠 In-Memory Cache | ✅ Done | `IMemoryCache` with sliding/absolute TTL, RAM-based `SizeLimit` |
-| 🛡️ Polly v8 Resilience | ✅ Done | Retry → CircuitBreaker → Timeout pipeline |
-| 🔒 Keyed Concurrency | ✅ Done | `SemaphoreSlim(1,1)` per normalized `KeyAttributes` signature |
-| ⚡ Rate Limiting | ✅ Done | Token bucket per Dataverse API call |
-| 📈 Adaptive Concurrency | ✅ Done | AIMD algorithm: halve on 429, increment after sustained success |
-| 🚫 Plugin Step Bypass | ✅ Done | `BypassBusinessLogicExecutionStepIds` per entity |
-| 🌐 HTTP Trigger | ✅ Done | `POST /api/upsert` with batch support, size & count guards |
-| 📨 Service Bus Trigger | ✅ Done | Queue-driven upsert processing with correlation tracking |
-| 🏷️ Early-bound Validation | ✅ Done | `MODEL` assembly reflection for entity/attribute mapping |
-| 🔐 Managed Identity Auth | ✅ Done | User-assigned managed identity via `ServiceClient` |
-| 💚 Health Endpoints | ✅ Done | `GET /health/live` (liveness) + `GET /health/ready` (readiness) |
-| 🛡️ Input Guards | ✅ Done | `MaxRequestBytes` (413), `MaxBatchItems` (400), JSON depth limit |
-| 🔎 Distributed Tracing | ✅ Done | `ActivitySource` spans in orchestrator, structured events in triggers |
-| ✅ Startup Validation | ✅ Done | HTTPS scheme check, range validation for all limits via `ValidateOnStart` |
-| 📈 Load Test Script | ✅ Done | Multi-threaded PowerShell with p50/p95/p99 reporting |
-| 📖 Documentation | ✅ Done | Full README, config table, JSON examples |
-| 🪧 Unit Tests | ✅ Done | 104 xUnit tests - all 11 services fully covered |
-| 🧪 Integration Tests | ✅ Done | 22 tests - FakeXrmEasy v9, HTTP trigger, ServiceBus trigger, DI |
-
----
-
-## 🏗️ Overview
-
-This repository implements:
-- ⚡ **HTTP trigger** (`DataverseUpsertHttp`) - incoming UPSERT requests in batch format with body size & batch count guards
-- 📨 **Service Bus trigger** (`DataverseUpsertServiceBus`) - reliable queue-driven UPSERT processing with correlation tracking
-- 🔀 **SOLID-decomposed pipeline** - clearly separated responsibilities (validation → lookup → execution → classification)
-- 🔍 **Recursive lookup resolution** - configurable max depth, cycle detection, per-lookup `CreateIfNotExists`
-- 🧠 **KeyAttributes→Guid in-memory cache** - per instance with sliding/absolute TTL and RAM-based size limits
-- 🔒 **Keyed concurrency control** per `KeyAttributes` signature - identical keys serialized, distinct keys parallel
-- 🛡️ **Polly v8 resilience pipeline** - retry with exponential backoff + jitter, circuit breaker, per-operation timeout
-- 🏷️ **Structured error classification** - Validation, Transient, Permanent, Throttling, Cancellation with per-payload detail
-- 🔗 **Dataverse upsert orchestration** via `IOrganizationServiceAsync2` and `Microsoft.PowerPlatform.Dataverse.Client`
-- 🔐 **User-assigned managed identity** authentication
-- ⚡ **Rate limiting** (token bucket) and configurable degree-of-parallelism
-- 📈 **Adaptive concurrency** (AIMD) - automatically halves parallelism on 429 throttling, recovers after sustained success
-- 🏷️ **Early-bound entity validation** and conversion via `MODEL` assembly
-- 💚 **Health endpoints** - `/health/live` (liveness) + `/health/ready` (Dataverse connectivity readiness)
-- 🛡️ **Input guards** - configurable `MaxRequestBytes` (413) and `MaxBatchItems` (400) with JSON depth limit
-- 🔎 **Distributed tracing** - `ActivitySource` spans in orchestrator, standardized structured events in all triggers
-- ✅ **Startup validation** - HTTPS scheme enforcement, `[Range]` + custom `Validate()` rules via `ValidateOnStart`
-
----
-
-## 🏙️ Architecture
-
-```
-📥 Request
-  → 📝 IRequestValidator
-  → 🏷️ IEarlyboundEntityMapper
-  → 🔍 ILookupResolver (recursive)
-  → 🧠 IExternalIdResolver (cache-first)
-  → ⚡ IEntityUpsertExecutor (Polly v8)
-  → 📤 IResultMapper
-→ 📥 Response
-```
-
-### 🧩 Core Services
-
-| Icon | Interface | Responsibility |
-|---|---|---|
-| 📝 | `IRequestValidator` | Payload + structural validation (KeyAttributes, types, nested lookups) |
-| 🏷️ | `IEarlyboundEntityMapper` | Entity mapping from JSON to SDK Entity via MODEL reflection |
-| 🧠 | `IExternalIdResolver` | KeyAttributes→Guid resolution with cache-first, invalidation on failure |
-| 🔍 | `ILookupResolver` | Recursive lookup resolution with cycle detection + depth limits |
-| ⚡ | `IEntityUpsertExecutor` | Dataverse Create/Update/Query wrapped in Polly v8 resilience + rate limiter |
-| � | `IAdaptiveConcurrencyLimiter` | AIMD concurrency control: halve on throttle, increment on sustained success |
-| �🔒 | `IUpsertLockCoordinator` | Keyed `SemaphoreSlim(1,1)` per normalized KeyAttributes signature |
-| 🚨 | `IErrorClassifier` | Exception → `ErrorCategory` mapping |
-| 📤 | `IResultMapper` | UpsertResult construction + batch HTTP status code determination |
-| 💚 | `IHealthCheckService` | Liveness + readiness health checks (Dataverse connectivity) |
-| 🎯 | `UpsertOrchestrator` | Thin pipeline coordinating all above services |
-
-### 📂 Project Structure
+## Architecture
 
 ```
 FUNC/
-├── 📁 Extensions/          → DI registration (DataverseServiceCollectionExtensions.cs)
-├── 📁 Functions/            → HTTP + ServiceBus + Health triggers
-├── 📁 Interfaces/           → 9 service interfaces (incl. IHealthCheckService)
-├── 📁 Models/               → DataverseOptions, UpsertContracts, ErrorCategory
-├── 📁 Services/             → 11 service implementations (incl. HealthCheckService)
-├── 📄 Program.cs            → Host builder + DI setup + startup validation
+├── Extensions/          → DI registration (DataverseServiceCollectionExtensions.cs)
+├── Functions/           → HTTP + ServiceBus + Health triggers
+├── Interfaces/          → 9 service interfaces
+├── Models/              → DataverseOptions, UpsertContracts, ErrorCategory
+├── Services/            → 11 service implementations
+└── Program.cs           → Host builder + DI + startup validation
 MODEL/
-├── 📁 Model/Entities/       → Early-bound entity classes (account, contact)
-├── 📁 Model/OptionSets/     → OptionSet enums
-└── 📁 Scripts/              → Code generation scripts
+├── Model/Entities/      → Early-bound entity classes (account, contact)
+├── Model/OptionSets/    → OptionSet enums
+└── Scripts/             → Code generation scripts
 TESTS/
-├── 📁 Unit/                 → 104 unit tests (all 11 services)
-├── 📁 Integration/          → 22 integration tests (FakeXrmEasy, triggers, DI)
-└── 📄 enterprise-d365-gateway.Tests.csproj
+├── Unit/                → 104 unit tests (all 11 services)
+└── Integration/         → 22 integration tests (FakeXrmEasy, triggers, DI)
 ```
 
-## ⚙️ Requirements
+**11 services** · **9 interfaces** · **126 tests** (104 unit + 22 integration) · **0 warnings**
 
-1. 📦 .NET 8 SDK (or newer) for building and running.
-2. 🔧 Environment variables / `local.settings.json`:
+### Pipeline
 
-| Key | Description | Default |
-|---|---|---|
-| `Dataverse__Url` | Dataverse org URL | *(required)* |
-| `Dataverse__UserAssignedManagedIdentityClientId` | Managed identity client id | *(optional)* |
-| `Dataverse__MaxRequestsPerSecond` | Token bucket rate limit | `300` |
-| `Dataverse__MaxDegreeOfParallelism` | Max parallel batch processing | `8` |
-| `Dataverse__MinDegreeOfParallelism` | Floor for adaptive concurrency | `1` |
-| `Dataverse__AdaptiveConcurrencyEnabled` | Enable AIMD auto-tuning of parallelism | `true` |
-| `Dataverse__AdaptiveConcurrencySuccessThreshold` | Consecutive successes before parallelism +1 | `20` |
-| `Dataverse__MaxRetries` | Retry attempts per operation | `4` |
-| `Dataverse__RetryBaseDelayMs` | Base delay for exponential backoff | `200` |
-| `Dataverse__RateLimitRetryDelaySeconds` | Fixed cooldown for 429/rate-limit retries | `300` |
-| `Dataverse__TimeoutPerOperationSeconds` | Timeout per Dataverse call | `30` |
-| `Dataverse__CircuitBreakerFailureThreshold` | Min throughput before evaluating failures | `10` |
-| `Dataverse__CircuitBreakerSamplingDurationSeconds` | Sampling window for circuit breaker | `60` |
-| `Dataverse__CircuitBreakerBreakDurationSeconds` | Duration circuit stays open | `30` |
-| `Dataverse__CacheSlidingExpirationMinutes` | Cache sliding TTL (entry stays if accessed) | `120` (2h) |
-| `Dataverse__CacheAbsoluteExpirationMinutes` | Cache absolute TTL (hard upper bound) | `360` (6h) |
-| `Dataverse__CacheMemoryBudgetPercent` | % of available RAM for cache | `20` |
-| `Dataverse__CacheMemoryBudgetMinMb` | Hard lower bound for cache `SizeLimit` (MB) | `64` |
-| `Dataverse__CacheMemoryBudgetMaxMb` | Hard upper bound for cache `SizeLimit` (MB) | `512` |
-| `Dataverse__CacheEntrySizeBytes` | Estimated size per cache entry | `128` |
-| `Dataverse__MaxLookupDepth` | Global max recursive lookup depth | `3` |
-| `Dataverse__LookupTimeoutSeconds` | Timeout budget per lookup tree | `60` |
-| `Dataverse__MaxBatchItems` | Maximum payloads per single request | `1000` |
-| `Dataverse__MaxRequestBytes` | Maximum request body size in bytes | `10485760` (10 MB) |
-| `Dataverse__BypassPluginStepIds__<entity>` | Comma-separated plugin step registration GUIDs to bypass for `<entity>` | *(empty - no bypass)* |
-| `ServiceBusConnection` | Azure Service Bus connection string | *(required for SB trigger)* |
-| `ServiceBusQueueName` | Queue name | *(required for SB trigger)* |
+```
+Request → IRequestValidator → IEarlyboundEntityMapper → ILookupResolver → IExternalIdResolver → IEntityUpsertExecutor → IResultMapper → Response
+```
+
+### Core Services
+
+| Interface | Responsibility |
+|-----------|----------------|
+| `IRequestValidator` | Payload + structural validation (KeyAttributes, types, nested lookups) |
+| `IEarlyboundEntityMapper` | Entity mapping from JSON to SDK Entity via MODEL reflection |
+| `IExternalIdResolver` | KeyAttributes→Guid resolution with cache-first, invalidation on failure |
+| `ILookupResolver` | Recursive lookup resolution with cycle detection + depth limits |
+| `IEntityUpsertExecutor` | Dataverse Create/Update/Query wrapped in Polly v8 + rate limiter |
+| `IAdaptiveConcurrencyLimiter` | AIMD concurrency: halve on throttle, increment on sustained success |
+| `IUpsertLockCoordinator` | Keyed `SemaphoreSlim(1,1)` per normalized KeyAttributes signature |
+| `IErrorClassifier` | Exception → `ErrorCategory` mapping |
+| `IResultMapper` | UpsertResult construction + batch HTTP status code determination |
+| `IHealthCheckService` | Liveness + readiness health checks (Dataverse connectivity) |
+| `UpsertOrchestrator` | Thin pipeline coordinating all above services |
 
 ---
 
-## Local Settings Configuration
+## Getting Started
 
-Add the following to `FUNC/local.settings.json` (replace `Dataverse:Url` with your actual Dataverse organization URL):
+### Prerequisites
+
+- [.NET 8 SDK](https://dotnet.microsoft.com/download) (8.0+)
+- [Azure Functions Core Tools](https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local) v4+
+- Dataverse organization URL and (optionally) a user-assigned managed identity
+
+### Build & Test
+
+```bash
+dotnet build enterprise-d365-gateway.sln
+dotnet test  TESTS/
+```
+
+### Run Locally
+
+1. Create `FUNC/local.settings.json` (see [Configuration](#configuration) below).
+2. Start the host:
+
+```bash
+func start --prefix FUNC
+```
+
+3. Send a test UPSERT request:
+
+```bash
+curl -X POST http://localhost:7071/api/upsert \
+     -H "Content-Type: application/json" \
+     -d '{"Payloads":[{"EntityLogicalName":"account","KeyAttributes":{"accountnumber":"ACCT-1001"},"Attributes":{"name":"Contoso"}}]}'
+```
+
+---
+
+## Configuration
+
+Add the following to `FUNC/local.settings.json`:
 
 ```json
 {
@@ -152,8 +119,6 @@ Add the following to `FUNC/local.settings.json` (replace `Dataverse:Url` with yo
   "Values": {
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
-    "Functions:Worker:HostEndpoint": "http://localhost:7071",
-
     "Dataverse:Url": "https://your-org.crm4.dynamics.com/",
     "Dataverse:UserAssignedManagedIdentityClientId": "",
     "Dataverse:MaxRequestsPerSecond": "120",
@@ -176,10 +141,8 @@ Add the following to `FUNC/local.settings.json` (replace `Dataverse:Url` with yo
     "Dataverse:MaxRequestBytes": "10485760",
     "Dataverse:BypassPluginStepIds:account": "",
     "Dataverse:BypassPluginStepIds:contact": "",
-
     "ServiceBusConnection": "Endpoint=sb://your-servicebus-namespace.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=YOUR_KEY",
     "ServiceBusQueueName": "dataverse-upsert-queue",
-
     "APPLICATIONINSIGHTS_CONNECTION_STRING": ""
   },
   "Host": {
@@ -190,48 +153,70 @@ Add the following to `FUNC/local.settings.json` (replace `Dataverse:Url` with yo
 }
 ```
 
+### Configuration Reference
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `Dataverse__Url` | Dataverse org URL | *(required)* |
+| `Dataverse__UserAssignedManagedIdentityClientId` | Managed identity client ID | *(optional)* |
+| `Dataverse__MaxRequestsPerSecond` | Token-bucket rate limit | `300` |
+| `Dataverse__MaxDegreeOfParallelism` | Max parallel batch processing | `8` |
+| `Dataverse__MinDegreeOfParallelism` | Floor for adaptive concurrency | `1` |
+| `Dataverse__AdaptiveConcurrencyEnabled` | Enable AIMD auto-tuning | `true` |
+| `Dataverse__AdaptiveConcurrencySuccessThreshold` | Consecutive successes before parallelism +1 | `20` |
+| `Dataverse__MaxRetries` | Retry attempts per operation | `4` |
+| `Dataverse__RetryBaseDelayMs` | Base delay for exponential backoff | `200` |
+| `Dataverse__RateLimitRetryDelaySeconds` | Fixed cooldown for 429 retries | `300` |
+| `Dataverse__TimeoutPerOperationSeconds` | Timeout per Dataverse call | `30` |
+| `Dataverse__CircuitBreakerFailureThreshold` | Min throughput before evaluating failures | `10` |
+| `Dataverse__CircuitBreakerSamplingDurationSeconds` | Sampling window for circuit breaker | `60` |
+| `Dataverse__CircuitBreakerBreakDurationSeconds` | Duration circuit stays open | `30` |
+| `Dataverse__CacheSlidingExpirationMinutes` | Cache sliding TTL | `120` (2 h) |
+| `Dataverse__CacheAbsoluteExpirationMinutes` | Cache absolute TTL (hard upper bound) | `360` (6 h) |
+| `Dataverse__CacheMemoryBudgetPercent` | % of available RAM for cache | `20` |
+| `Dataverse__CacheMemoryBudgetMinMb` | Lower bound for cache `SizeLimit` | `64` |
+| `Dataverse__CacheMemoryBudgetMaxMb` | Upper bound for cache `SizeLimit` | `512` |
+| `Dataverse__CacheEntrySizeBytes` | Estimated size per cache entry | `128` |
+| `Dataverse__MaxLookupDepth` | Global max recursive lookup depth | `3` |
+| `Dataverse__LookupTimeoutSeconds` | Timeout budget per lookup tree | `60` |
+| `Dataverse__MaxBatchItems` | Maximum payloads per request | `1000` |
+| `Dataverse__MaxRequestBytes` | Maximum request body size | `10485760` (10 MB) |
+| `Dataverse__BypassPluginStepIds__<entity>` | Comma-separated plugin step GUIDs to bypass | *(empty)* |
+| `ServiceBusConnection` | Azure Service Bus connection string | *(required for SB trigger)* |
+| `ServiceBusQueueName` | Queue name | *(required for SB trigger)* |
+
 ---
 
-## �📋 JSON Contract
+## JSON Contract
 
-### 📄 Simple Upsert
+### Simple Upsert
+
 ```json
 {
   "Payloads": [
     {
       "EntityLogicalName": "account",
-      "KeyAttributes": {
-        "accountnumber": "ACCT-1001"
-      },
-      "Attributes": {
-        "name": "Contoso",
-        "description": "Enterprise gateway upsert"
-      },
+      "KeyAttributes": { "accountnumber": "ACCT-1001" },
+      "Attributes": { "name": "Contoso", "description": "Enterprise gateway upsert" },
       "SourceSystem": "ERP"
     }
   ]
 }
 ```
 
-### 🔍 Single Lookup (CreateIfNotExists)
+### Single Lookup (CreateIfNotExists)
+
 ```json
 {
   "Payloads": [
     {
       "EntityLogicalName": "account",
-      "KeyAttributes": {
-        "accountnumber": "ACCT-1002"
-      },
-      "Attributes": {
-        "name": "Adventure Works",
-        "address1_city": "Seattle"
-      },
+      "KeyAttributes": { "accountnumber": "ACCT-1002" },
+      "Attributes": { "name": "Adventure Works", "address1_city": "Seattle" },
       "Lookups": {
         "primarycontactid": {
           "EntityLogicalName": "contact",
-          "KeyAttributes": {
-            "emailaddress1": "john.doe@example.com"
-          },
+          "KeyAttributes": { "emailaddress1": "john.doe@example.com" },
           "CreateIfNotExists": true,
           "CreateAttributes": {
             "firstname": "John",
@@ -245,24 +230,19 @@ Add the following to `FUNC/local.settings.json` (replace `Dataverse:Url` with yo
 }
 ```
 
-### 🔄 Recursive Lookup (Nested 2 Levels)
+### Recursive Lookup (Nested 2 Levels)
+
 ```json
 {
   "Payloads": [
     {
       "EntityLogicalName": "account",
-      "KeyAttributes": {
-        "accountnumber": "ACCT-2000"
-      },
-      "Attributes": {
-        "name": "Recursive Corp"
-      },
+      "KeyAttributes": { "accountnumber": "ACCT-2000" },
+      "Attributes": { "name": "Recursive Corp" },
       "Lookups": {
         "primarycontactid": {
           "EntityLogicalName": "contact",
-          "KeyAttributes": {
-            "emailaddress1": "nested@example.com"
-          },
+          "KeyAttributes": { "emailaddress1": "nested@example.com" },
           "CreateIfNotExists": true,
           "CreateAttributes": {
             "firstname": "Nested",
@@ -272,14 +252,9 @@ Add the following to `FUNC/local.settings.json` (replace `Dataverse:Url` with yo
           "NestedLookups": {
             "accountid": {
               "EntityLogicalName": "account",
-              "KeyAttributes": {
-                "accountnumber": "PARENT-100"
-              },
+              "KeyAttributes": { "accountnumber": "PARENT-100" },
               "CreateIfNotExists": true,
-              "CreateAttributes": {
-                "name": "Parent Account",
-                "accountnumber": "PARENT-100"
-              }
+              "CreateAttributes": { "name": "Parent Account", "accountnumber": "PARENT-100" }
             }
           }
         }
@@ -290,48 +265,36 @@ Add the following to `FUNC/local.settings.json` (replace `Dataverse:Url` with yo
 }
 ```
 
-### 📦 Batch with MaxLookupDepth Override
-```json
-{
-  "Payloads": [ ... ],
-  "MaxLookupDepth": 5
-}
-```
-
-### 🔍 Lookup Resolution
-The `Lookups` property allows automatic resolution of entity references:
-- 🔑 **KeyAttributes**: Required key-value pairs used for lookup, cache, and concurrency signature.
-- ➕ **CreateIfNotExists**: If `true`, creates the referenced entity if not found.
-- 📝 **CreateAttributes**: Attributes used when creating the referenced entity.
-- 🔄 **NestedLookups**: Recursive lookup definitions resolved *before* the parent entity is created.
-- 📏 **MaxDepth**: Optional per-lookup override for maximum recursion depth.
+### Lookup Resolution
 
 Resolution order:
-1. 🔍 Query Dataverse by `KeyAttributes`.
-2. ✅ If found → return `EntityReference`.
-3. ➕ If not found and `CreateIfNotExists` → resolve `NestedLookups` recursively → create entity → return `EntityReference`.
-4. ❌ If not found and `CreateIfNotExists` is `false` → fail with `Permanent` error.
+1. Query Dataverse by `KeyAttributes`.
+2. If found → return `EntityReference`.
+3. If not found and `CreateIfNotExists` → resolve `NestedLookups` recursively → create → return `EntityReference`.
+4. If not found and `CreateIfNotExists` is `false` → fail with `Permanent` error.
 
-🛡️ Safety:
-- 📏 **MaxDepth**: Global default 3, overridable per batch (`MaxLookupDepth`), per payload, or per lookup (`MaxDepth`).
-- 🔄 **Cycle Detection**: Visited set per resolution path prevents infinite loops.
-- 🗑️ Lookup resolution failures invalidate cache and trigger a single fresh re-resolve.
+**Safety:**
+- **Max depth**: global default is 3, overridable per batch or per lookup.
+- **Cycle detection**: visited-set per resolution path prevents infinite loops.
+- **Cache eviction**: on failure with a cached GUID, the entry is evicted and a single fresh re-resolve is attempted.
 
 ---
 
-## 🚨 Error Model
+## Error Model
 
-### ErrorCategory Enum
+### ErrorCategory
+
 | Value | Description | HTTP Mapping |
-|---|---|---|
+|-------|-------------|--------------|
 | `None` | Success | 200 |
-| `Validation` | Structural/type/KeyAttributes errors | 400 |
+| `Validation` | Structural / type / KeyAttributes errors | 400 |
 | `Transient` | Timeout, network, circuit breaker | 500 |
 | `Permanent` | Dataverse rejection, unrecoverable | 500 |
 | `Throttling` | Rate limit exceeded | 500 |
-| `Cancellation` | Request was canceled | 408 |
+| `Cancellation` | Request cancelled | 408 |
 
-### 📤 Response Structure
+### Response
+
 ```json
 {
   "Id": "00000000-0000-0000-0000-000000000000",
@@ -354,302 +317,120 @@ Resolution order:
 }
 ```
 
-### 🔢 Batch Status Code Logic
-- ✅ `200 OK`: All payloads succeeded (`ErrorCategory == None`).
-- ⚠️ `400 Bad Request`: Only `Validation` failures, no technical errors.
-- ❌ `500 Internal Server Error`: At least one `Transient`, `Permanent`, or `Throttling` failure.
+### Batch Status Code Logic
 
-ℹ️ All payload results are always returned in full, regardless of overall status code.
+| Result | HTTP Code |
+|--------|-----------|
+| All payloads succeeded | `200 OK` |
+| Only `Validation` failures | `400 Bad Request` |
+| Any `Transient` / `Permanent` / `Throttling` failure | `500 Internal Server Error` |
+| Request body too large | `413 Payload Too Large` |
 
----
-
-## 🧠 Cache Behavior
-- 🎯 **Scope**: Per Function instance (in-process `IMemoryCache`, not distributed).
-- ⏱️ **Sliding Expiration**: 2h - entry stays alive as long as it’s accessed within this window.
-- ⏰ **Absolute Expiration**: 6h - hard upper bound regardless of access frequency.
-- 💾 **RAM Budget**: Cache `SizeLimit` is computed from `CacheMemoryBudgetPercent` and then clamped between `CacheMemoryBudgetMinMb` and `CacheMemoryBudgetMaxMb`.
-- 📏 **Entry Size**: Each entry’s `Size` is set to `CacheEntrySizeBytes` (128 bytes default).
-- 🗑️ **Invalidation**: On upsert/resolve failure with a cached GUID, the cache key is evicted and a single fresh re-resolve is attempted.
-- 🚫 **No Distribution**: Cache is local per instance. No Redis or cross-instance synchronization.
+All payload results are always returned in full regardless of overall status code.
 
 ---
 
-## 🛡️ Resilience Pipeline (Polly v8)
-All Dataverse I/O (Create, Update, RetrieveMultiple) goes through a unified resilience pipeline:
-
-1. 🔄 **Retry** (outermost): Exponential backoff with jitter. Handles `TimeoutException`, `HttpRequestException`, `TimeoutRejectedException`.
-2. ⚡ **Circuit Breaker** (middle): Opens after `FailureRatio > 0.5` within the sampling window. Rejects calls for `BreakDuration` seconds.
-3. ⏱️ **Timeout** (innermost): Per-operation timeout (`TimeoutPerOperationSeconds`).
-
-⚡ Rate limiting is applied per Dataverse API call via a token bucket limiter (`MaxRequestsPerSecond`).
-
----
-
-## � Adaptive Concurrency (AIMD)
-Batch parallelism is dynamically tuned using an **Additive Increase / Multiplicative Decrease** algorithm (same principle as TCP congestion control):
-
-- 📉 **Multiplicative Decrease**: On every 429 (rate-limit) response, the effective parallelism is **halved** (floor: `MinDegreeOfParallelism`).
-- 📈 **Additive Increase**: After `AdaptiveConcurrencySuccessThreshold` consecutive successful operations, parallelism increases by **+1** (ceiling: `MaxDegreeOfParallelism`).
-- 🔄 **Start high**: Initial limit equals `MaxDegreeOfParallelism`; the system self-tunes downward on throttling and recovers when pressure subsides.
-- 🧵 **Thread-safe**: Lock-free via `Interlocked` / `Volatile` — no contention under high concurrency.
-
-The `EntityUpsertExecutor` signals `RecordThrottle()` on 429 retries and `RecordSuccess()` after each successful Dataverse call. The `UpsertOrchestrator` reads `CurrentLimit` before each batch to set `ParallelOptions.MaxDegreeOfParallelism`.
-
----
-
-## �🔒 Concurrency Control
-- 🏷️ `KeyAttributes` is **required** for every main entity and every lookup/nested lookup.
-- ✂️ A deterministic signature is derived server-side: `{entity}:{sorted key=value pairs}`.
-- 🔀 Identical `KeyAttributes` signatures are **serialized** (keyed `SemaphoreSlim(1,1)`), preventing race conditions on the same record.
-- 🚀 Different `KeyAttributes` signatures run fully in parallel.
-- ℹ️ Identical payloads are NOT deduplicated - each is processed and serialized by key.
-
----
-
-## 🚫 Custom Plugin Step Bypass
-When performing bulk operations it is often desirable to bypass specific custom Dataverse plugin steps to reduce processing time and avoid side-effects.
-This is implemented via the [📖 `BypassBusinessLogicExecutionStepIds` optional parameter](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/bypass-custom-business-logic?tabs=sdk).
-
-**🔧 Configuration** (environment variables / `local.settings.json`):
-
-Map entity logical name → comma-separated plugin step registration GUIDs:
-```
-Dataverse:BypassPluginStepIds:account = "45e0c603-0d0b-466e-a286-d7fc1cda8361,d5370603-e4b9-4b92-b765-5966492a4fd7"
-Dataverse:BypassPluginStepIds:contact = "a1b2c3d4-0000-0000-0000-000000000001"
-```
-
-Or as environment variables:
-```
-Dataverse__BypassPluginStepIds__account=45e0c603-...,d5370603-...
-Dataverse__BypassPluginStepIds__contact=a1b2c3d4-...
-```
-
-**⚙️ Behaviour**:
-- ✅ Only `Create` and `Update` operations are affected; `RetrieveMultiple` (lookups) is never bypassed.
-- 🎯 Per-entity: only entities with configured step IDs use the optional parameter.
-- 📝 At startup the executor logs each entity and its bypass step IDs.
-- ⚠️ **Limit**: Dataverse defaults to max 3 step IDs per request (adjustable via `BypassBusinessLogicExecutionStepIdsLimit` OrgDbOrgSetting, max 10).
-- 🔐 **Requirement**: the Dataverse application user must hold the `prvBypassCustomBusinessLogic` privilege.
-- 🔍 Step IDs can be found via the Plugin Registration Tool or by querying `sdkmessageprocessingstep` records.
-
----
-
-## 💚 Health Endpoints
-
-Two HTTP health check endpoints for container orchestrators, load balancers, and monitoring:
+## Health Endpoints
 
 | Endpoint | Auth | Purpose |
-|---|---|---|
-| `GET /health/live` | Anonymous | **Liveness** - returns `200` if the process is running, `503` otherwise |
-| `GET /health/ready` | Function Key | **Readiness** - validates Dataverse `ServiceClient` connectivity |
+|----------|------|---------|
+| `GET /health/live` | Anonymous | Liveness — `200` if the process is running |
+| `GET /health/ready` | Function Key | Readiness — validates Dataverse `ServiceClient` connectivity |
 
-### Readiness Response
 ```json
 {
   "Status": "Healthy",
   "Checks": {
-    "DataverseConnection": {
-      "Status": "Healthy",
-      "Detail": null
-    }
+    "DataverseConnection": { "Status": "Healthy", "Detail": null }
   }
 }
 ```
 
-If Dataverse is unreachable, returns `503` with `"Status": "Unhealthy"` and `Detail` containing the error message.
+If Dataverse is unreachable, returns `503` with `"Status": "Unhealthy"` and a `Detail` error message.
 
 ---
 
-## 🔎 Distributed Tracing
+## Integration Tests
 
-The gateway emits structured `System.Diagnostics.Activity` spans and events for correlation across the pipeline:
-
-| Source | Span/Event | Tags |
-|---|---|---|
-| `UpsertOrchestrator` | `UpsertBatch` span | `batch.size`, `batch.failed`, `batch.validation_failed`, `batch.technical_failed` |
-| `HttpUpsertTrigger` | Structured log events | `CorrelationId`, `BatchSize`, status codes |
-| `ServiceBusUpsertTrigger` | `ServiceBusUpsertReceived/Succeeded/Failed/Exception` | `CorrelationId`, `BatchSize`, failure counts |
-
-ActivitySource name: `enterprise-d365-gateway.UpsertOrchestrator`
-
----
-
-## ✅ Startup Validation
-
-Configuration is validated at startup via `ValidateDataAnnotations()` + custom `Validate()` rules + `ValidateOnStart()`:
-
-- 🔒 `Dataverse:Url` must use `https://` scheme
-- 📏 `MaxRequestBytes` must be ≥ 1024
-- 📏 `MaxBatchItems` must be ≥ 1
-- 📊 All `[Range]` annotations on `DataverseOptions` are enforced
-
-Invalid configuration prevents the Function App from starting, providing a clear error message.
-
----
-
-## 🧪 Testing
-
-**126 tests total**, all passing.
-
-```powershell
+```bash
 # Run all tests
-dotnet test TESTS/ --verbosity normal
+dotnet test TESTS/
 
-# Run with coverage
+# Unit tests only
+dotnet test TESTS/ --filter "Category!=Integration"
+
+# With coverage
 dotnet test TESTS/ --collect:"XPlat Code Coverage"
 ```
 
-### Unit Tests (104)
-| Service | Tests |
-|---|---|
-| `ErrorClassifier` | 14 |
-| `DataverseValueNormalizer` | 14 |
-| `RequestValidator` | 12 |
-| `AdaptiveConcurrencyLimiter` | 10 |
-| `LookupResolver` | 10 |
-| `EarlyboundEntityMapper` | 9 |
-| `ExternalIdResolver` | 8 |
-| `ResultMapper` | 8 |
-| `EntityUpsertExecutor` | 7 |
-| `EntityMappingCache` | 6 |
-| `UpsertLockCoordinator` | 6 |
+Tests require no external services — integration tests use FakeXrmEasy v9 in-memory Dataverse.
 
-### Integration Tests (22)
-| Scope | Tests | Notes |
-|---|---|---|
-| `UpsertOrchestrator` | 9 | FakeXrmEasy v9 in-memory Dataverse |
-| `HttpUpsertTrigger` | 6 | End-to-end HTTP trigger testing |
-| `ServiceBusTrigger` | 5 | Queue-driven processing |
-| `DependencyInjection` | 2 | Full DI container validation |
+### Test Breakdown
 
-### Test Stack
-- **xUnit 2.9.2** - test framework
-- **Moq 4.20.72** - mocking
-- **FluentAssertions 6.12.2** - assertion library
-- **FakeXrmEasy.v9 3.8.0** - in-memory Dataverse (RPL-1.5 license)
-- **coverlet.collector 6.0.2** - code coverage
+| Suite | Tests |
+|-------|-------|
+| Unit (11 services) | 104 |
+| Integration — `UpsertOrchestrator` (FakeXrmEasy) | 9 |
+| Integration — `HttpUpsertTrigger` | 6 |
+| Integration — `ServiceBusTrigger` | 5 |
+| Integration — Dependency Injection | 2 |
+| **Total** | **126** |
 
 ---
 
-## 🚀 How to Run Locally
-1. 📦 `dotnet build` (requires .NET 8 SDK).
-2. ▶️ `func start` in `FUNC` folder with `local.settings.json` configured.
-3. 🧪 `dotnet test TESTS/` to run the full test suite.
+## Load Testing
 
----
-
-## 📡 Response Behavior
-- ✅ `200 OK`: all payloads processed successfully.
-- ⚠️ `400 Bad Request`: only validation failures (unknown attributes, type mismatch, missing KeyAttributes) or batch count exceeds `MaxBatchItems`.
-- 📏 `413 Payload Too Large`: request body exceeds `MaxRequestBytes`.
-- ❌ `500 Internal Server Error`: at least one technical failure occurred.
-
-ℹ️ Failure details are always returned per payload with `ErrorCategory`, `ErrorMessage`, and `ValidationErrors`.
-
----
-
-## 📈 Load Testing
-A PowerShell script `LoadTest.ps1` (repository root) is provided for load testing the HTTP endpoint:
+A PowerShell script `LoadTest.ps1` (repository root) load-tests the HTTP endpoint:
 
 ```powershell
-# Basic usage (requires PowerShell 7+)
+# Basic usage (PowerShell 7+)
 .\LoadTest.ps1 -FunctionUrl "http://localhost:7071/api/upsert" -FunctionKey "your-function-key"
 
-# Safe profile (best for avoiding 429 spikes)
+# Safe profile (minimise throttling)
 .\LoadTest.ps1 -FunctionUrl "http://localhost:7071/api/upsert" -Profile Safe
 
-# Stop early if 429 rate remains high
-.\LoadTest.ps1 -FunctionUrl "http://localhost:7071/api/upsert" `
-              -Profile Normal `
-              -AbortOnHigh429 `
-              -Abort429Percent 60 `
-              -AbortWindowRequests 30 `
-              -AbortConsecutiveWindows 2
-
-# Advanced usage with custom parameters
+# Custom parameters
 .\LoadTest.ps1 -FunctionUrl "https://your-function.azurewebsites.net/api/upsert" `
-              -Profile Normal `
-              -FunctionKey "your-function-key" `
-              -ThreadCount 8 `
-              -RequestsPerThread 40 `
-              -BatchSize 3 `
-              -ThreadRampUpMs 500 `
-              -InterRequestDelayMs 250 `
-              -InterRequestJitterMs 250
+               -Profile Normal -FunctionKey "your-function-key" `
+               -ThreadCount 8 -RequestsPerThread 40 -BatchSize 3
 ```
 
-Parameters:
-- `FunctionUrl`: The URL of the upsert endpoint (required)
-- `FunctionKey`: Azure Function key for authentication (optional)
-- `Profile`: Load profile (`Safe`, `Normal`, `Stress`, `Custom`; default: `Normal`)
-- `ThreadCount`: Number of parallel threads (default: 6)
-- `RequestsPerThread`: Number of requests per thread (default: 80)
-- `BatchSize`: Number of payloads per request (default: 3)
-- `ThreadRampUpMs`: Delay before starting next thread (default: 500)
-- `InterRequestDelayMs`: Base delay between requests per thread in ms (default: 250)
-- `InterRequestJitterMs`: Additional random delay per request in ms (default: 250)
-- `RequestTimeoutSeconds`: Per-request timeout in seconds (default: 60)
-- `LookupProbabilityPercent`: Chance of including a lookup per payload (default: 100)
-- `DuplicateBurstSize`: Number of identical payloads to burst (default: 0 = off)
-- `IncludeNegativeTests`: Include invalid JSON/type error requests (default: false)
-- `ReportPath`: Optional JSON output path for detailed raw results
-- `AbortOnHigh429`: Stops a thread early when sustained 429 rate is above threshold
-- `Abort429Percent`: 429 percentage threshold per window (default: 60)
-- `AbortWindowRequests`: Number of requests in one evaluation window (default: 30)
-- `AbortConsecutiveWindows`: Consecutive high-429 windows required to abort (default: 2)
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `FunctionUrl` | *(required)* | Upsert endpoint URL |
+| `FunctionKey` | | Azure Function key |
+| `Profile` | `Normal` | `Safe` / `Normal` / `Stress` / `Custom` |
+| `ThreadCount` | `6` | Parallel threads |
+| `RequestsPerThread` | `80` | Requests per thread |
+| `BatchSize` | `3` | Payloads per request |
+| `ReportPath` | | Optional JSON output path |
 
-Profile behavior:
-- `Safe`: very defensive throughput (best to minimize throttling and retry storms)
-- `Normal`: balanced throughput for regular performance tests
-- `Stress`: aggressive throughput to probe limits (expect higher 429 rates)
-- `Custom`: disables profile overrides and uses only explicitly provided parameter values
-
-The script generates random account data with `KeyAttributes` and reports:
-- Success/failure totals and throughput (requests/s, payloads/s)
-- Response time stats including p50/p95/p99
-- Status code distribution and sample errors
-
-### 📊 Report Output Examples
-
-```powershell
-# Save a report with fixed filename
-.\LoadTest.ps1 -FunctionUrl "http://localhost:7071/api/upsert" `
-              -ThreadCount 6 `
-              -RequestsPerThread 80 `
-              -BatchSize 3 `
-              -ReportPath ".\reports\loadtest-latest.json"
-
-# Save a report with timestamped filename
-$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$reportPath = ".\reports\loadtest-$timestamp.json"
-
-.\LoadTest.ps1 -FunctionUrl "http://localhost:7071/api/upsert" `
-              -ThreadCount 8 `
-              -RequestsPerThread 40 `
-              -BatchSize 3 `
-              -ThreadRampUpMs 500 `
-              -InterRequestDelayMs 250 `
-              -InterRequestJitterMs 250 `
-              -DuplicateBurstSize 5 `
-              -IncludeNegativeTests `
-              -ReportPath $reportPath
-```
+Reports p50/p95/p99 latency, throughput (req/s, payloads/s), and status-code distribution.
 
 ---
 
-## 📝 Notes
-- 🚀 This design can scale to millions of requests, within Dataverse limits. Add a queue-throttling layer (Azure Front Door / API Management) for further protection.
-- 🧠 Cache is scoped per Function App instance - no distributed cache. Consider Redis if multi-instance consistency is critical.
-- ℹ️ All clients must include `KeyAttributes` in payloads and lookups.
---
+## Technology Stack
 
-## ⚠️ Disclaimer
+| Component | Version |
+|-----------|---------|
+| .NET | 8.0 LTS |
+| Microsoft.PowerPlatform.Dataverse.Client | 1.x |
+| Polly | 8.x |
+| xUnit | 2.9.2 |
+| Moq | 4.20.72 |
+| FluentAssertions | 6.12.2 |
+| FakeXrmEasy.v9 | 3.8.0 |
 
-This repository is a private project.
+---
 
-It is provided without any warranty, guarantee, or representation of any kind.
-Use is entirely at your own risk. The author accepts no liability for direct or
-indirect damages, data loss, outages, or any other consequences resulting from
-the use of this project.
+## License
 
---
+MIT
+
+## Disclaimer
+
+Private project. Provided without warranty. Use at your own risk.
+
+---
+
+> Built with ❤️ for Microsoft Dynamics 365 integration engineers.
