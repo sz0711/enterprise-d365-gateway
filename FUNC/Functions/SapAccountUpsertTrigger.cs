@@ -9,7 +9,7 @@ using enterprise_d365_gateway.Interfaces;
 
 namespace enterprise_d365_gateway.Functions
 {
-    public class HttpUpsertTrigger
+    public class SapAccountUpsertTrigger
     {
         private static readonly JsonSerializerOptions DeserializeOptions = new()
         {
@@ -17,27 +17,35 @@ namespace enterprise_d365_gateway.Functions
             MaxDepth = 32
         };
 
+        private readonly ISapAccountMapper _mapper;
         private readonly IDataverseUpsertService _upsertService;
         private readonly IResultMapper _resultMapper;
-        private readonly ILogger<HttpUpsertTrigger> _logger;
+        private readonly ILogger<SapAccountUpsertTrigger> _logger;
         private readonly DataverseOptions _options;
 
-        public HttpUpsertTrigger(IDataverseUpsertService upsertService, IResultMapper resultMapper, ILogger<HttpUpsertTrigger> logger, IOptions<DataverseOptions> options)
+        public SapAccountUpsertTrigger(
+            ISapAccountMapper mapper,
+            IDataverseUpsertService upsertService,
+            IResultMapper resultMapper,
+            ILogger<SapAccountUpsertTrigger> logger,
+            IOptions<DataverseOptions> options)
         {
+            _mapper = mapper;
             _upsertService = upsertService;
             _resultMapper = resultMapper;
             _logger = logger;
             _options = options.Value;
         }
 
-        [Function("DataverseUpsertHttp")]
-        public async Task<HttpResponseData> RunAsync([HttpTrigger(AuthorizationLevel.Function, "post", Route = "upsert")] HttpRequestData req)
+        [Function("SapAccountUpsertHttp")]
+        public async Task<HttpResponseData> RunAsync(
+            [HttpTrigger(AuthorizationLevel.Function, "post", Route = "sap/account-with-contacts")] HttpRequestData req)
         {
             var correlationId = req.Headers.TryGetValues("x-correlation-id", out var headerValues)
                 ? headerValues.FirstOrDefault() ?? Guid.NewGuid().ToString("N")
                 : Guid.NewGuid().ToString("N");
 
-            _logger.LogInformation("DataverseUpsertHttp triggered. CorrelationId={CorrelationId}", correlationId);
+            _logger.LogInformation("SapAccountUpsertHttp triggered. CorrelationId={CorrelationId}", correlationId);
 
             // Guard: request body size
             if (req.Body.CanSeek && req.Body.Length > _options.MaxRequestBytes)
@@ -51,44 +59,54 @@ namespace enterprise_d365_gateway.Functions
                 return tooLargeResponse;
             }
 
-            UpsertBatchRequest payload;
+            SapAccountWithContactsRequest sapRequest;
             try
             {
-                payload = await JsonSerializer.DeserializeAsync<UpsertBatchRequest>(req.Body, DeserializeOptions)
+                sapRequest = await JsonSerializer.DeserializeAsync<SapAccountWithContactsRequest>(req.Body, DeserializeOptions)
                     ?? throw new InvalidOperationException("Invalid payload body.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Cannot parse request body. CorrelationId={CorrelationId}", correlationId);
+                _logger.LogError(ex, "Cannot parse SAP request body. CorrelationId={CorrelationId}", correlationId);
                 var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
                 badResponse.Headers.Add("x-correlation-id", correlationId);
                 await badResponse.WriteStringAsync($"Invalid request: {ex.Message}");
                 return badResponse;
             }
 
-            if (payload.Payloads == null || payload.Payloads.Count == 0)
-            {
-                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                badResponse.Headers.Add("x-correlation-id", correlationId);
-                await badResponse.WriteStringAsync("Invalid request: Payloads must contain at least one item.");
-                return badResponse;
-            }
-
-            if (payload.Payloads.Count > _options.MaxBatchItems)
-            {
-                _logger.LogWarning(
-                    "Batch too large ({Count} items, limit {Limit}). CorrelationId={CorrelationId}",
-                    payload.Payloads.Count, _options.MaxBatchItems, correlationId);
-                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                badResponse.Headers.Add("x-correlation-id", correlationId);
-                await badResponse.WriteStringAsync($"Invalid request: Payloads count ({payload.Payloads.Count}) exceeds the maximum of {_options.MaxBatchItems}.");
-                return badResponse;
-            }
-
-            IReadOnlyList<UpsertResult> result;
+            SapMappingResult mapping;
             try
             {
-                result = await _upsertService.UpsertBatchAsync(payload.Payloads, req.FunctionContext.CancellationToken);
+                mapping = _mapper.Map(sapRequest);
+            }
+            catch (PayloadValidationException ex)
+            {
+                _logger.LogWarning(ex, "SAP payload validation failed. CorrelationId={CorrelationId}", correlationId);
+                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                badResponse.Headers.Add("x-correlation-id", correlationId);
+                await badResponse.WriteStringAsync($"Validation failed: {ex.Message}");
+                return badResponse;
+            }
+
+            var allResults = new List<UpsertResult>();
+            var ct = req.FunctionContext.CancellationToken;
+            try
+            {
+                // Phase 1: Upsert account first so it exists for contact lookups
+                allResults.Add(await _upsertService.UpsertAsync(mapping.AccountPayload, ct));
+
+                // Phase 2: Upsert contacts (parentcustomerid lookup can now find the account)
+                if (mapping.ContactPayloads.Count > 0)
+                {
+                    var contactResults = await _upsertService.UpsertBatchAsync(mapping.ContactPayloads, ct);
+                    allResults.AddRange(contactResults);
+                }
+
+                // Phase 3: Link primary contact to account (contact now exists from phase 2)
+                if (mapping.PrimaryContactLinkPayload != null)
+                {
+                    allResults.Add(await _upsertService.UpsertAsync(mapping.PrimaryContactLinkPayload, ct));
+                }
             }
             catch (OperationCanceledException)
             {
@@ -99,15 +117,15 @@ namespace enterprise_d365_gateway.Functions
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unhandled upsert exception. CorrelationId={CorrelationId}", correlationId);
+                _logger.LogError(ex, "Unhandled SAP upsert exception. CorrelationId={CorrelationId}", correlationId);
                 var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
                 errorResponse.Headers.Add("x-correlation-id", correlationId);
-                await errorResponse.WriteStringAsync("Internal server error while processing upsert request.");
+                await errorResponse.WriteStringAsync("Internal server error while processing SAP upsert request.");
                 return errorResponse;
             }
 
             int failures = 0, validationFailures = 0;
-            foreach (var r in result)
+            foreach (var r in allResults)
             {
                 if (r.ErrorCategory != ErrorCategory.None)
                 {
@@ -118,12 +136,12 @@ namespace enterprise_d365_gateway.Functions
             }
             var technicalFailures = failures - validationFailures;
 
-            var statusCode = _resultMapper.DetermineBatchStatusCode(result);
+            var statusCode = _resultMapper.DetermineBatchStatusCode(allResults);
 
             _logger.LogInformation(
-                "HTTP upsert finished. CorrelationId={CorrelationId}, Total={Total}, Failed={Failed}, ValidationFailed={ValidationFailed}, TechnicalFailed={TechnicalFailed}",
+                "SAP upsert finished. CorrelationId={CorrelationId}, Total={Total}, Failed={Failed}, ValidationFailed={ValidationFailed}, TechnicalFailed={TechnicalFailed}",
                 correlationId,
-                result.Count,
+                allResults.Count,
                 failures,
                 validationFailures,
                 technicalFailures);
@@ -131,7 +149,7 @@ namespace enterprise_d365_gateway.Functions
             var response = req.CreateResponse(statusCode);
             response.Headers.Add("Content-Type", "application/json");
             response.Headers.Add("x-correlation-id", correlationId);
-            await response.WriteStringAsync(JsonSerializer.Serialize(result));
+            await response.WriteStringAsync(JsonSerializer.Serialize(allResults));
             return response;
         }
     }

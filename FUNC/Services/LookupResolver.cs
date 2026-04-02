@@ -31,6 +31,34 @@ namespace enterprise_d365_gateway.Services
             HashSet<string> visited,
             CancellationToken cancellationToken = default)
         {
+            // Apply lookup timeout budget at the root call (depth 0)
+            if (currentDepth == 0 && _options.LookupTimeoutSeconds > 0)
+            {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.LookupTimeoutSeconds));
+
+                try
+                {
+                    return await ResolveInternalAsync(attributeName, lookupDef, currentDepth, maxDepth, visited, timeoutCts.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new TimeoutException(
+                        $"Lookup resolution for '{attributeName}' exceeded the timeout of {_options.LookupTimeoutSeconds}s.");
+                }
+            }
+
+            return await ResolveInternalAsync(attributeName, lookupDef, currentDepth, maxDepth, visited, cancellationToken);
+        }
+
+        private async Task<(EntityReference Reference, LookupTrace Trace)> ResolveInternalAsync(
+            string attributeName,
+            LookupDefinition lookupDef,
+            int currentDepth,
+            int maxDepth,
+            HashSet<string> visited,
+            CancellationToken cancellationToken)
+        {
             var effectiveMaxDepth = lookupDef.MaxDepth ?? maxDepth;
 
             if (currentDepth >= effectiveMaxDepth)
@@ -143,7 +171,7 @@ namespace enterprise_d365_gateway.Services
                     var nestedTraces = new List<LookupTrace>();
                     foreach (var nested in lookupDef.NestedLookups)
                     {
-                        var (nestedRef, nestedTrace) = await ResolveAsync(
+                        var (nestedRef, nestedTrace) = await ResolveInternalAsync(
                             nested.Key,
                             nested.Value,
                             currentDepth + 1,

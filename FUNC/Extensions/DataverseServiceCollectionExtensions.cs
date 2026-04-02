@@ -66,6 +66,9 @@ namespace enterprise_d365_gateway.Extensions
             // Health
             services.AddSingleton<IHealthCheckService, HealthCheckService>();
 
+            // SAP Mapping
+            services.AddSingleton<ISapAccountMapper, SapAccountMapper>();
+
             return services;
         }
     }

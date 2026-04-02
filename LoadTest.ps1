@@ -66,7 +66,15 @@ param(
 
     [Parameter(Mandatory=$false)]
     [ValidateSet("Safe", "Normal", "Stress", "Custom")]
-    [string]$Profile = "Normal"
+    [string]$Profile = "Normal",
+
+    [Parameter(Mandatory=$false)]
+    [ValidateSet("Upsert", "SapAccountWithContacts")]
+    [string]$Endpoint = "Upsert",
+
+    [Parameter(Mandatory=$false)]
+    [ValidateRange(0, 10)]
+    [int]$SapContactsPerRequest = 2
 )
 
 function Get-Percentile {
@@ -129,8 +137,14 @@ if ($Profile -ne "Custom") {
 
 # Main script
 Write-Host "Load profile: $Profile"
+Write-Host "Endpoint: $Endpoint"
 Write-Host "Starting load test with $ThreadCount threads, $RequestsPerThread requests per thread, $BatchSize payloads per request"
-Write-Host "Total expected payloads: $($ThreadCount * $RequestsPerThread * $BatchSize)"
+if ($Endpoint -eq "SapAccountWithContacts") {
+    Write-Host "SAP contacts per request: $SapContactsPerRequest"
+    Write-Host "Total expected payloads: $($ThreadCount * $RequestsPerThread * (1 + $SapContactsPerRequest))"
+} else {
+    Write-Host "Total expected payloads: $($ThreadCount * $RequestsPerThread * $BatchSize)"
+}
 Write-Host "Target URL: $FunctionUrl"
 Write-Host "Request timeout: $RequestTimeoutSeconds seconds"
 Write-Host "Lookup probability: $LookupProbabilityPercent%"
@@ -150,7 +164,7 @@ $startTime = Get-Date
 $jobs = @()
 for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
     $job = Start-Job -ScriptBlock {
-        param($Url, $Key, $ThreadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests, $InterRequestDelayMs, $InterRequestJitterMs, $AbortOnHigh429, $Abort429Percent, $AbortWindowRequests, $AbortConsecutiveWindows)
+        param($Url, $Key, $ThreadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests, $InterRequestDelayMs, $InterRequestJitterMs, $AbortOnHigh429, $Abort429Percent, $AbortWindowRequests, $AbortConsecutiveWindows, $Endpoint, $SapContactsPerRequest)
 
         # Function to generate random payload (defined inside job)
         function New-RandomPayload {
@@ -205,6 +219,53 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
             return $payload
         }
 
+        # Function to generate SAP Account+Contacts payload (defined inside job)
+        function New-SapPayload {
+            param([int]$Index)
+
+            $accountNames = @("SAP Contoso", "SAP Adventure Works", "SAP Fabrikam", "SAP Northwind", "SAP Tailspin", "SAP Blue Yonder", "SAP City Power", "SAP Humongous", "SAP Lucerne", "SAP Margie")
+            $cities = @("Berlin", "München", "Hamburg", "Stuttgart", "Frankfurt", "Köln", "Düsseldorf", "Leipzig", "Dresden", "Hannover")
+            $streets = @("Friedrichstr. 1", "Hauptstr. 42", "Berliner Allee 7", "Königstr. 12", "Marienplatz 3", "Alexanderplatz 5")
+            $countries = @("DE", "AT", "CH")
+            $firstNames = @("Anna", "Max", "Lukas", "Sophia", "Leon", "Mia", "Paul", "Clara", "Felix", "Emma")
+            $lastNames = @("Schmidt", "Müller", "Weber", "Fischer", "Wagner", "Becker", "Schulz", "Hoffmann", "Koch", "Richter")
+            $jobTitles = @("CTO", "CEO", "CFO", "Head of IT", "Project Manager", "Sales Director", "Consultant", $null, $null, $null)
+
+            $accountNumber = "SAP-{0:D6}" -f $Index
+            $randomName = $accountNames | Get-Random
+
+            $payload = @{
+                AccountNumber = $accountNumber
+                Name = "$randomName ($Index)"
+                City = $cities | Get-Random
+                Street = $streets | Get-Random
+                PostalCode = "{0:D5}" -f (Get-Random -Minimum 10000 -Maximum 99999)
+                Country = $countries | Get-Random
+                Phone = "+49 {0} {1}" -f (Get-Random -Minimum 30 -Maximum 89), (Get-Random -Minimum 1000000 -Maximum 9999999)
+            }
+
+            if ($SapContactsPerRequest -gt 0) {
+                $contacts = @()
+                for ($c = 0; $c -lt $SapContactsPerRequest; $c++) {
+                    $fn = $firstNames | Get-Random
+                    $ln = $lastNames | Get-Random
+                    $contactEmail = "$fn.$ln$Index.$c@example.com".ToLower()
+                    $contact = @{
+                        Email = $contactEmail
+                        FirstName = $fn
+                        LastName = $ln
+                        IsPrimary = ($c -eq 0)
+                    }
+                    $jt = $jobTitles | Get-Random
+                    if ($jt) { $contact.JobTitle = $jt }
+                    $contacts += $contact
+                }
+                $payload.Contacts = $contacts
+            }
+
+            return $payload
+        }
+
         # Function to send batch request
         function Send-BatchRequest {
             param(
@@ -236,28 +297,42 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
                     $sendTypeError = $IncludeNegativeTests -and -not $sendInvalid -and (($i + 1) % 25 -eq 0)
 
                     if (-not $sendInvalid) {
-                        for ($j = 0; $j -lt $BatchSize; $j++) {
-                            $globalIndex = ($ThreadId * $RequestsPerThread * $BatchSize) + ($i * $BatchSize) + $j
-                            $p = New-RandomPayload -Index $globalIndex
+                        if ($Endpoint -eq "SapAccountWithContacts") {
+                            # SAP endpoint: single payload per request (no batch wrapper)
+                            $globalIndex = ($ThreadId * $RequestsPerThread) + $i
+                            $sapPayload = New-SapPayload -Index $globalIndex
 
-                            if ($sendTypeError -and $j -eq 0) {
-                                # Inject a type error: put a string where an int is expected
-                                $p.Attributes["address1_utcoffset"] = "not-a-number"
+                            if ($sendTypeError) {
+                                # Inject missing required field
+                                $sapPayload.Remove("Name")
+                            }
+                        }
+                        else {
+                            for ($j = 0; $j -lt $BatchSize; $j++) {
+                                $globalIndex = ($ThreadId * $RequestsPerThread * $BatchSize) + ($i * $BatchSize) + $j
+                                $p = New-RandomPayload -Index $globalIndex
+
+                                if ($sendTypeError -and $j -eq 0) {
+                                    # Inject a type error: put a string where an int is expected
+                                    $p.Attributes["address1_utcoffset"] = "not-a-number"
+                                }
+
+                                $payloads += $p
                             }
 
-                            $payloads += $p
-                        }
-
-                        # Duplicate burst: repeat the first payload N times
-                        if ($DuplicateBurstSize -gt 0 -and $payloads.Count -gt 0) {
-                            for ($d = 0; $d -lt $DuplicateBurstSize; $d++) {
-                                $payloads += $payloads[0]
+                            # Duplicate burst: repeat the first payload N times
+                            if ($DuplicateBurstSize -gt 0 -and $payloads.Count -gt 0) {
+                                for ($d = 0; $d -lt $DuplicateBurstSize; $d++) {
+                                    $payloads += $payloads[0]
+                                }
                             }
                         }
                     }
 
                     if ($sendInvalid) {
                         $requestBody = '{"Payloads": [{"broken json'
+                    } elseif ($Endpoint -eq "SapAccountWithContacts") {
+                        $requestBody = $sapPayload | ConvertTo-Json -Depth 10
                     } else {
                         $requestBody = @{
                             Payloads = $payloads
@@ -359,7 +434,7 @@ for ($threadId = 0; $threadId -lt $ThreadCount; $threadId++) {
 
         # Execute the function
         Send-BatchRequest -Url $Url -Key $Key -ThreadId $ThreadId -RequestsPerThread $RequestsPerThread -BatchSize $BatchSize -AbortOnHigh429 $AbortOnHigh429 -Abort429Percent $Abort429Percent -AbortWindowRequests $AbortWindowRequests -AbortConsecutiveWindows $AbortConsecutiveWindows
-    } -ArgumentList $FunctionUrl, $FunctionKey, $threadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests.IsPresent, $InterRequestDelayMs, $InterRequestJitterMs, $AbortOnHigh429.IsPresent, $Abort429Percent, $AbortWindowRequests, $AbortConsecutiveWindows
+    } -ArgumentList $FunctionUrl, $FunctionKey, $threadId, $RequestsPerThread, $BatchSize, $RequestTimeoutSeconds, $LookupProbabilityPercent, $DuplicateBurstSize, $IncludeNegativeTests.IsPresent, $InterRequestDelayMs, $InterRequestJitterMs, $AbortOnHigh429.IsPresent, $Abort429Percent, $AbortWindowRequests, $AbortConsecutiveWindows, $Endpoint, $SapContactsPerRequest
     $jobs += $job
 
     if ($ThreadRampUpMs -gt 0 -and $threadId -lt ($ThreadCount - 1)) {
@@ -380,7 +455,11 @@ $totalTime = (Get-Date) - $startTime
 
 # Calculate statistics
 $totalRequests = $allResults.Count
-$totalPayloads = $totalRequests * $BatchSize
+if ($Endpoint -eq "SapAccountWithContacts") {
+    $totalPayloads = $totalRequests * (1 + $SapContactsPerRequest)
+} else {
+    $totalPayloads = $totalRequests * $BatchSize
+}
 $successfulRequests = ($allResults | Where-Object { $_.Success }).Count
 $failedRequests = $totalRequests - $successfulRequests
 $successRate = if ($totalRequests -gt 0) { ($successfulRequests / $totalRequests) * 100 } else { 0 }

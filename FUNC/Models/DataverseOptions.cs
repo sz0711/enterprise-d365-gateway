@@ -15,8 +15,6 @@ namespace enterprise_d365_gateway.Models
         public int MaxDegreeOfParallelism { get; set; } = 8;
 
         // Adaptive Concurrency (AIMD)
-        public bool AdaptiveConcurrencyEnabled { get; set; } = true;
-
         [Range(1, 64)]
         public int MinDegreeOfParallelism { get; set; } = 1;
 

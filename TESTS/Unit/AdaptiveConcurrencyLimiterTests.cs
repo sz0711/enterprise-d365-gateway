@@ -16,8 +16,7 @@ public class AdaptiveConcurrencyLimiterTests
         Url = "https://test.crm.dynamics.com",
         MaxDegreeOfParallelism = max,
         MinDegreeOfParallelism = min,
-        AdaptiveConcurrencySuccessThreshold = successThreshold,
-        AdaptiveConcurrencyEnabled = true
+        AdaptiveConcurrencySuccessThreshold = successThreshold
     };
 
     private static AdaptiveConcurrencyLimiter CreateSut(DataverseOptions? options = null)

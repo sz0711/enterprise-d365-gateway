@@ -87,8 +87,16 @@ namespace enterprise_d365_gateway.Services
                     results[index] = await UpsertAsync(requestList[index], ct);
                 });
 
-            var failures = results.Count(r => r.ErrorCategory != ErrorCategory.None);
-            var validationFailures = results.Count(r => r.ErrorCategory == ErrorCategory.Validation);
+            int failures = 0, validationFailures = 0;
+            foreach (var r in results)
+            {
+                if (r.ErrorCategory != ErrorCategory.None)
+                {
+                    failures++;
+                    if (r.ErrorCategory == ErrorCategory.Validation)
+                        validationFailures++;
+                }
+            }
             var technicalFailures = failures - validationFailures;
 
             activity?.SetTag("batch.failed", failures);
@@ -109,7 +117,8 @@ namespace enterprise_d365_gateway.Services
         {
             var result = await ExecuteSingleAsync(payload, cancellationToken);
 
-            // If failed with possible stale cache, invalidate and retry once
+            // Retry on Transient OR Permanent: a stale cached GUID can cause a
+            // "permanent" duplicate-key error that resolves after cache invalidation.
             if (result.ErrorCategory is ErrorCategory.Transient or ErrorCategory.Permanent
                 && payload.KeyAttributes != null
                 && payload.KeyAttributes.Count > 0)
@@ -249,6 +258,9 @@ namespace enterprise_d365_gateway.Services
 
         private void LogEntityAttributes(Entity entity)
         {
+            if (!_logger.IsEnabled(LogLevel.Information))
+                return;
+
             if (entity.Attributes.Count == 0)
             {
                 _logger.LogInformation("Entity {EntityLogicalName} has no attributes before save.", entity.LogicalName);

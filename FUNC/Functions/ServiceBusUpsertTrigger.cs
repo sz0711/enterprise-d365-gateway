@@ -8,6 +8,11 @@ namespace enterprise_d365_gateway.Functions
 {
     public class ServiceBusUpsertTrigger
     {
+        private static readonly JsonSerializerOptions DeserializeOptions = new()
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
         private readonly IDataverseUpsertService _upsertService;
         private readonly ILogger<ServiceBusUpsertTrigger> _logger;
 
@@ -36,7 +41,7 @@ namespace enterprise_d365_gateway.Functions
             UpsertBatchRequest? payload;
             try
             {
-                payload = JsonSerializer.Deserialize<UpsertBatchRequest>(message, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                payload = JsonSerializer.Deserialize<UpsertBatchRequest>(message, DeserializeOptions);
                 if (payload?.Payloads == null || payload.Payloads.Count == 0)
                 {
                     _logger.LogWarning("Empty or invalid payload received, ignoring message. InvocationId={InvocationId}", invocationId);
@@ -44,8 +49,16 @@ namespace enterprise_d365_gateway.Functions
                 }
 
                 var results = await _upsertService.UpsertBatchAsync(payload.Payloads, context.CancellationToken);
-                var failures = results.Count(r => r.ErrorCategory != ErrorCategory.None);
-                var validationFailures = results.Count(r => r.ErrorCategory == ErrorCategory.Validation);
+                int failures = 0, validationFailures = 0;
+                foreach (var r in results)
+                {
+                    if (r.ErrorCategory != ErrorCategory.None)
+                    {
+                        failures++;
+                        if (r.ErrorCategory == ErrorCategory.Validation)
+                            validationFailures++;
+                    }
+                }
                 var technicalFailures = failures - validationFailures;
 
                 if (failures > 0)
