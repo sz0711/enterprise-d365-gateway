@@ -1,5 +1,6 @@
 using enterprise_d365_gateway.Interfaces;
 using enterprise_d365_gateway.Models;
+using MODEL;
 
 namespace enterprise_d365_gateway.Services
 {
@@ -31,16 +32,16 @@ namespace enterprise_d365_gateway.Services
             {
                 result.PrimaryContactLinkPayload = new UpsertPayload
                 {
-                    EntityLogicalName = "account",
-                    KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = request.AccountNumber },
+                    EntityLogicalName = Account.EntityLogicalName,
+                    KeyAttributes = new Dictionary<string, object?> { [Account.Fields.AccountNumber] = request.AccountNumber },
                     Attributes = new Dictionary<string, object?>(),
                     SourceSystem = "SAP",
                     Lookups = new Dictionary<string, LookupDefinition>
                     {
-                        ["primarycontactid"] = new LookupDefinition
+                        [Account.Fields.PrimaryContactId] = new LookupDefinition
                         {
-                            EntityLogicalName = "contact",
-                            KeyAttributes = new Dictionary<string, object?> { ["emailaddress1"] = primaryContact.Email }
+                            EntityLogicalName = Contact.EntityLogicalName,
+                            KeyAttributes = new Dictionary<string, object?> { [Contact.Fields.EMailAddress1] = primaryContact.Email }
                         }
                     }
                 };
@@ -53,25 +54,25 @@ namespace enterprise_d365_gateway.Services
         {
             var attributes = new Dictionary<string, object?>
             {
-                ["firstname"] = contact.FirstName,
-                ["lastname"] = contact.LastName
+                [Contact.Fields.FirstName] = contact.FirstName,
+                [Contact.Fields.LastName] = contact.LastName
             };
 
-            if (contact.Phone != null) attributes["telephone1"] = contact.Phone;
-            if (contact.JobTitle != null) attributes["jobtitle"] = contact.JobTitle;
+            if (contact.Phone != null) attributes[Contact.Fields.Telephone1] = contact.Phone;
+            if (contact.JobTitle != null) attributes[Contact.Fields.JobTitle] = contact.JobTitle;
 
             return new UpsertPayload
             {
-                EntityLogicalName = "contact",
-                KeyAttributes = new Dictionary<string, object?> { ["emailaddress1"] = contact.Email },
+                EntityLogicalName = Contact.EntityLogicalName,
+                KeyAttributes = new Dictionary<string, object?> { [Contact.Fields.EMailAddress1] = contact.Email },
                 Attributes = attributes,
                 SourceSystem = "SAP",
                 Lookups = new Dictionary<string, LookupDefinition>
                 {
-                    ["parentcustomerid"] = new LookupDefinition
+                    [Contact.Fields.ParentCustomerId] = new LookupDefinition
                     {
-                        EntityLogicalName = "account",
-                        KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = accountNumber }
+                        EntityLogicalName = Account.EntityLogicalName,
+                        KeyAttributes = new Dictionary<string, object?> { [Account.Fields.AccountNumber] = accountNumber }
                     }
                 }
             };
@@ -81,21 +82,21 @@ namespace enterprise_d365_gateway.Services
         {
             var attributes = new Dictionary<string, object?>
             {
-                ["name"] = request.Name
+                [Account.Fields.Name] = request.Name
             };
 
-            if (request.City != null) attributes["address1_city"] = request.City;
-            if (request.Street != null) attributes["address1_line1"] = request.Street;
-            if (request.PostalCode != null) attributes["address1_postalcode"] = request.PostalCode;
-            if (request.Country != null) attributes["address1_country"] = request.Country;
-            if (request.Phone != null) attributes["telephone1"] = request.Phone;
-            if (request.Email != null) attributes["emailaddress1"] = request.Email;
-            if (request.Website != null) attributes["websiteurl"] = request.Website;
+            if (request.City != null) attributes[Account.Fields.Address1_City] = request.City;
+            if (request.Street != null) attributes[Account.Fields.Address1_Line1] = request.Street;
+            if (request.PostalCode != null) attributes[Account.Fields.Address1_PostalCode] = request.PostalCode;
+            if (request.Country != null) attributes[Account.Fields.Address1_Country] = request.Country;
+            if (request.Phone != null) attributes[Account.Fields.Telephone1] = request.Phone;
+            if (request.Email != null) attributes[Account.Fields.EMailAddress1] = request.Email;
+            if (request.Website != null) attributes[Account.Fields.WebSiteURL] = request.Website;
 
             return new UpsertPayload
             {
-                EntityLogicalName = "account",
-                KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = request.AccountNumber },
+                EntityLogicalName = Account.EntityLogicalName,
+                KeyAttributes = new Dictionary<string, object?> { [Account.Fields.AccountNumber] = request.AccountNumber },
                 Attributes = attributes,
                 SourceSystem = "SAP"
             };
