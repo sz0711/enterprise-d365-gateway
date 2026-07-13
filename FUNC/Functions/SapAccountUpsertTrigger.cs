@@ -4,6 +4,8 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Xrm.Sdk;
+using MODEL;
 using enterprise_d365_gateway.Models;
 using enterprise_d365_gateway.Interfaces;
 
@@ -41,37 +43,54 @@ namespace enterprise_d365_gateway.Functions
         public async Task<HttpResponseData> RunAsync(
             [HttpTrigger(AuthorizationLevel.Function, "post", Route = "sap/account-with-contacts")] HttpRequestData req)
         {
-            var correlationId = req.Headers.TryGetValues("x-correlation-id", out var headerValues)
-                ? headerValues.FirstOrDefault() ?? Guid.NewGuid().ToString("N")
-                : Guid.NewGuid().ToString("N");
+            var correlationId = HttpResponseWriter.ResolveCorrelationId(req);
 
             _logger.LogInformation("SapAccountUpsertHttp triggered. CorrelationId={CorrelationId}", correlationId);
 
-            // Guard: request body size
-            if (req.Body.CanSeek && req.Body.Length > _options.MaxRequestBytes)
+            // Guard: request body size (declared length fast path + hard read limit)
+            if (RequestBodyGuard.ExceedsDeclaredLength(req, _options.MaxRequestBytes))
             {
                 _logger.LogWarning(
-                    "Request body too large ({BodySize} bytes, limit {Limit}). CorrelationId={CorrelationId}",
-                    req.Body.Length, _options.MaxRequestBytes, correlationId);
-                var tooLargeResponse = req.CreateResponse((HttpStatusCode)413);
-                tooLargeResponse.Headers.Add("x-correlation-id", correlationId);
-                await tooLargeResponse.WriteStringAsync($"Request body exceeds the maximum allowed size of {_options.MaxRequestBytes} bytes.");
-                return tooLargeResponse;
+                    "Request body too large (limit {Limit} bytes). CorrelationId={CorrelationId}",
+                    _options.MaxRequestBytes, correlationId);
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, (HttpStatusCode)413,
+                    $"Request body exceeds the maximum allowed size of {_options.MaxRequestBytes} bytes.",
+                    correlationId);
             }
 
             SapAccountWithContactsRequest sapRequest;
             try
             {
-                sapRequest = await JsonSerializer.DeserializeAsync<SapAccountWithContactsRequest>(req.Body, DeserializeOptions)
-                    ?? throw new InvalidOperationException("Invalid payload body.");
+                var limitedBody = RequestBodyGuard.LimitBody(req.Body, _options.MaxRequestBytes);
+                sapRequest = await JsonSerializer.DeserializeAsync<SapAccountWithContactsRequest>(limitedBody, DeserializeOptions)
+                    ?? throw new JsonException("Request body must contain a JSON object.");
             }
-            catch (Exception ex)
+            catch (RequestBodyTooLargeException ex)
             {
-                _logger.LogError(ex, "Cannot parse SAP request body. CorrelationId={CorrelationId}", correlationId);
-                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                badResponse.Headers.Add("x-correlation-id", correlationId);
-                await badResponse.WriteStringAsync($"Invalid request: {ex.Message}");
-                return badResponse;
+                _logger.LogWarning(
+                    "Request body too large while reading (limit {Limit} bytes). CorrelationId={CorrelationId}",
+                    _options.MaxRequestBytes, correlationId);
+                return await HttpResponseWriter.WriteErrorAsync(req, (HttpStatusCode)413, ex.Message, correlationId);
+            }
+            catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
+            {
+                _logger.LogWarning(ex, "Cannot parse SAP request body. CorrelationId={CorrelationId}", correlationId);
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, HttpStatusCode.BadRequest, $"Invalid request: {ex.Message}", correlationId);
+            }
+
+            // Guard: contact fan-out is bounded like every other batch surface
+            var contactCount = sapRequest.Contacts?.Count ?? 0;
+            if (contactCount > _options.MaxBatchItems)
+            {
+                _logger.LogWarning(
+                    "SAP request with too many contacts ({Count}, limit {Limit}). CorrelationId={CorrelationId}",
+                    contactCount, _options.MaxBatchItems, correlationId);
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, HttpStatusCode.BadRequest,
+                    $"Invalid request: Contacts count ({contactCount}) exceeds the maximum of {_options.MaxBatchItems}.",
+                    correlationId);
             }
 
             SapMappingResult mapping;
@@ -82,48 +101,112 @@ namespace enterprise_d365_gateway.Functions
             catch (PayloadValidationException ex)
             {
                 _logger.LogWarning(ex, "SAP payload validation failed. CorrelationId={CorrelationId}", correlationId);
-                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                badResponse.Headers.Add("x-correlation-id", correlationId);
-                await badResponse.WriteStringAsync($"Validation failed: {ex.Message}");
-                return badResponse;
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, HttpStatusCode.BadRequest, "Validation failed.", correlationId, ex.ValidationErrors);
             }
 
-            var allResults = new List<UpsertResult>();
+            var allResults = new List<UpsertResult>(1 + mapping.ContactPayloads.Count + 1);
             var ct = req.FunctionContext.CancellationToken;
             try
             {
-                // Phase 1: Upsert account first so it exists for contact lookups
-                allResults.Add(await _upsertService.UpsertAsync(mapping.AccountPayload, ct));
+                // Phase 1: Upsert account first so it exists for contact linking.
+                var accountResult = await _upsertService.UpsertAsync(mapping.AccountPayload, ct);
+                allResults.Add(accountResult);
 
-                // Phase 2: Upsert contacts (parentcustomerid lookup can now find the account)
+                if (accountResult.ErrorCategory != ErrorCategory.None)
+                {
+                    // Short-circuit: without the account, contact upserts and the
+                    // primary-contact link can only produce misleading cascade
+                    // failures (or worse, a half-initialized account in phase 3).
+                    _logger.LogWarning(
+                        "SAP phase 1 (account) failed with {Category} — skipping contact phases. CorrelationId={CorrelationId}",
+                        accountResult.ErrorCategory, correlationId);
+
+                    return await WriteResultsAsync(req, allResults, correlationId, contactsSkipped: contactCount);
+                }
+
+                // Phase 2: Upsert contacts. The account GUID from phase 1 is wired
+                // in directly — no per-contact account lookup round-trips.
+                IReadOnlyList<UpsertResult> contactResults = Array.Empty<UpsertResult>();
                 if (mapping.ContactPayloads.Count > 0)
                 {
-                    var contactResults = await _upsertService.UpsertBatchAsync(mapping.ContactPayloads, ct);
+                    if (accountResult.Id != Guid.Empty)
+                    {
+                        foreach (var contactPayload in mapping.ContactPayloads)
+                        {
+                            contactPayload.Attributes[Contact.Fields.ParentCustomerId] =
+                                new EntityReference(Account.EntityLogicalName, accountResult.Id);
+                            contactPayload.Lookups = null;
+                        }
+                    }
+
+                    contactResults = await _upsertService.UpsertBatchAsync(mapping.ContactPayloads, ct);
                     allResults.AddRange(contactResults);
                 }
 
-                // Phase 3: Link primary contact to account (contact now exists from phase 2)
+                // Phase 3: Link the primary contact to the account.
                 if (mapping.PrimaryContactLinkPayload != null)
                 {
-                    allResults.Add(await _upsertService.UpsertAsync(mapping.PrimaryContactLinkPayload, ct));
+                    var linkPayload = mapping.PrimaryContactLinkPayload;
+                    var primaryResult = mapping.PrimaryContactIndex is int idx && idx < contactResults.Count
+                        ? contactResults[idx]
+                        : null;
+
+                    if (primaryResult != null && primaryResult.ErrorCategory != ErrorCategory.None)
+                    {
+                        // The primary contact's state is unknown — a lookup-based
+                        // link would fail or bind stale data. Report it explicitly,
+                        // carrying the contact's own failure category so a purely
+                        // throttled batch still surfaces as a retryable 429 rather
+                        // than a manufactured 500.
+                        allResults.Add(new UpsertResult
+                        {
+                            EntityLogicalName = Account.EntityLogicalName,
+                            UpsertKey = allResults[0].UpsertKey,
+                            ErrorCategory = primaryResult.ErrorCategory,
+                            ErrorMessage = $"Primary contact link skipped: the primary contact upsert did not succeed ({primaryResult.ErrorCategory})."
+                        });
+                    }
+                    else
+                    {
+                        // Wire the known GUIDs directly — no lookup round-trips and
+                        // no ambiguity should the e-mail match multiple contacts.
+                        // (Falls back to the mapper's e-mail lookup if a GUID is unavailable.)
+                        if (accountResult.Id != Guid.Empty)
+                            linkPayload.Id = accountResult.Id;
+                        if (primaryResult != null && primaryResult.Id != Guid.Empty)
+                        {
+                            linkPayload.Attributes[Account.Fields.PrimaryContactId] =
+                                new EntityReference(Contact.EntityLogicalName, primaryResult.Id);
+                            linkPayload.Lookups = null;
+                        }
+
+                        allResults.Add(await _upsertService.UpsertAsync(linkPayload, ct));
+                    }
                 }
             }
             catch (OperationCanceledException)
             {
-                var timeoutResponse = req.CreateResponse(HttpStatusCode.RequestTimeout);
-                timeoutResponse.Headers.Add("x-correlation-id", correlationId);
-                await timeoutResponse.WriteStringAsync("Request was canceled.");
-                return timeoutResponse;
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, HttpStatusCode.RequestTimeout, "Request was canceled.", correlationId);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unhandled SAP upsert exception. CorrelationId={CorrelationId}", correlationId);
-                var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
-                errorResponse.Headers.Add("x-correlation-id", correlationId);
-                await errorResponse.WriteStringAsync("Internal server error while processing SAP upsert request.");
-                return errorResponse;
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, HttpStatusCode.InternalServerError,
+                    "Internal server error while processing SAP upsert request.", correlationId);
             }
 
+            return await WriteResultsAsync(req, allResults, correlationId, contactsSkipped: 0);
+        }
+
+        private async Task<HttpResponseData> WriteResultsAsync(
+            HttpRequestData req,
+            IReadOnlyList<UpsertResult> allResults,
+            string correlationId,
+            int contactsSkipped)
+        {
             int failures = 0, validationFailures = 0;
             foreach (var r in allResults)
             {
@@ -139,18 +222,19 @@ namespace enterprise_d365_gateway.Functions
             var statusCode = _resultMapper.DetermineBatchStatusCode(allResults);
 
             _logger.LogInformation(
-                "SAP upsert finished. CorrelationId={CorrelationId}, Total={Total}, Failed={Failed}, ValidationFailed={ValidationFailed}, TechnicalFailed={TechnicalFailed}",
+                "SAP upsert finished. CorrelationId={CorrelationId}, Total={Total}, Failed={Failed}, ValidationFailed={ValidationFailed}, TechnicalFailed={TechnicalFailed}, ContactsSkipped={ContactsSkipped}",
                 correlationId,
                 allResults.Count,
                 failures,
                 validationFailures,
-                technicalFailures);
+                technicalFailures,
+                contactsSkipped);
 
-            var response = req.CreateResponse(statusCode);
-            response.Headers.Add("Content-Type", "application/json");
-            response.Headers.Add("x-correlation-id", correlationId);
-            await response.WriteStringAsync(JsonSerializer.Serialize(allResults));
-            return response;
+            var retryAfter = statusCode == HttpStatusCode.TooManyRequests
+                ? _options.RateLimitRetryDelaySeconds
+                : (int?)null;
+
+            return await HttpResponseWriter.WriteJsonAsync(req, statusCode, allResults, correlationId, retryAfter);
         }
     }
 }

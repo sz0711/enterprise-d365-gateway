@@ -8,6 +8,12 @@ namespace enterprise_d365_gateway.Models
         public string Url { get; set; } = string.Empty;
         public string? UserAssignedManagedIdentityClientId { get; set; }
 
+        /// <summary>
+        /// Optional explicit AAD token scope. When empty, the scope is derived
+        /// from <see cref="Url"/> as "{scheme}://{host}/.default".
+        /// </summary>
+        public string? Scope { get; set; }
+
         [Range(1, 5000)]
         public int MaxRequestsPerSecond { get; set; } = 300;
 

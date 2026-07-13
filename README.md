@@ -286,11 +286,13 @@ The **SAP Account with Contacts** endpoint (`POST /api/sap/account-with-contacts
 
 ### Three-Phase Execution
 
-1. **Phase 1 — Account upsert**: The account is upserted first (keyed on `accountnumber`) so it exists for subsequent contact lookups.
-2. **Phase 2 — Contacts batch**: All contacts are upserted in parallel (keyed on `emailaddress1`), each with a `parentcustomerid` lookup pointing to the account from Phase 1.
-3. **Phase 3 — Primary contact link** *(optional)*: If a contact has `IsPrimary = true`, a follow-up account upsert sets `primarycontactid` to the contact created in Phase 2.
+1. **Phase 1 — Account upsert**: The account is upserted first (keyed on `accountnumber`). If this phase fails, the request **short-circuits**: contacts and the primary-contact link are skipped and only the account result is returned.
+2. **Phase 2 — Contacts batch**: All contacts are upserted in parallel (keyed on `emailaddress1`). The account GUID from Phase 1 is wired directly into `parentcustomerid` — no per-contact lookup round-trips.
+3. **Phase 3 — Primary contact link** *(optional)*: If a contact has `IsPrimary = true`, a follow-up account update sets `primarycontactid` using the contact GUID from Phase 2. If the primary contact's upsert failed, the link is skipped and reported as an explicit error result.
 
-This phased approach guarantees that lookups always find exactly one target record, preventing the duplicate-record race condition that occurs when `CreateIfNotExists` lookups run concurrently in a single batch.
+This phased approach with direct GUID wiring guarantees deterministic linking (no ambiguity when an e-mail matches multiple records) and costs exactly one Dataverse round-trip per record.
+
+**Request validation:** `AccountNumber` and `Name` are required; every contact needs a non-empty `Email` (the contact key), `FirstName` and `LastName`; contact e-mails must be unique per request; at most one contact may be `IsPrimary`; the contact count is capped at `Dataverse:MaxBatchItems`.
 
 ### Request Contract
 
@@ -359,8 +361,10 @@ The response follows the same `UpsertResult[]` format as the generic `/api/upser
 | `Validation` | Structural / type / KeyAttributes errors | 400 |
 | `Transient` | Timeout, network, circuit breaker | 500 |
 | `Permanent` | Dataverse rejection, unrecoverable | 500 |
-| `Throttling` | Rate limit exceeded | 500 |
-| `Cancellation` | Request cancelled | 408 |
+| `Throttling` | Rate limit exceeded | 429 (+ `Retry-After` header) |
+| `Cancellation` | Request cancelled | 500 (client-observed cancellations return 408) |
+
+Dataverse service-protection faults (`FaultException<OrganizationServiceFault>` with the documented throttling error codes) are recognized by error code, retried with the server's `Retry-After` hint, and reduce the adaptive concurrency limit.
 
 ### Response
 
@@ -392,10 +396,15 @@ The response follows the same `UpsertResult[]` format as the generic `/api/upser
 |--------|-----------|
 | All payloads succeeded | `200 OK` |
 | Only `Validation` failures | `400 Bad Request` |
-| Any `Transient` / `Permanent` / `Throttling` failure | `500 Internal Server Error` |
-| Request body too large | `413 Payload Too Large` |
+| Throttling failures (and no other technical failures) | `429 Too Many Requests` + `Retry-After` |
+| Any `Transient` / `Permanent` / `Cancellation` failure | `500 Internal Server Error` |
+| Request body too large (enforced on non-seekable streams too) | `413 Payload Too Large` |
 
-All payload results are always returned in full regardless of overall status code.
+All payload results are always returned in full regardless of overall status code. Enums are serialized as strings, error responses are structured JSON (`{ "Error", "Details"?, "CorrelationId" }`), and `x-correlation-id` is echoed on every response (sanitized: max 64 printable ASCII characters).
+
+### Service Bus Poison-Message Policy
+
+The Service Bus trigger never silently completes bad messages: malformed JSON, empty batches, oversized batches and failed upserts all **throw**, so Service Bus retries up to `MaxDeliveryCount` and then dead-letters the message with the evidence intact. Upserts are idempotent — redelivery re-applies succeeded items safely.
 
 ---
 
@@ -404,18 +413,18 @@ All payload results are always returned in full regardless of overall status cod
 | Endpoint | Auth | Purpose |
 |----------|------|---------|
 | `GET /health/live` | Anonymous | Liveness — `200` if the process is running |
-| `GET /health/ready` | Function Key | Readiness — validates Dataverse `ServiceClient` connectivity |
+| `GET /health/ready` | Function Key | Readiness — performs a real `WhoAmI` round-trip against Dataverse (a broken/poisoned client turns readiness `503`) |
 
 ```json
 {
   "Status": "Healthy",
   "Checks": {
-    "DataverseConnection": { "Status": "Healthy", "Detail": null }
+    "dataverse": { "Status": "Healthy", "Detail": "WhoAmI round trip OK (org 00000000-0000-0000-0000-000000000000)." }
   }
 }
 ```
 
-If Dataverse is unreachable, returns `503` with `"Status": "Unhealthy"` and a `Detail` error message.
+If Dataverse is unreachable, returns `503` with `"Status": "Unhealthy"` and a `Detail` naming the failure class (exception details stay in the logs, not the response).
 
 ---
 
@@ -438,13 +447,9 @@ Tests require no external services — integration tests use FakeXrmEasy v9 in-m
 
 | Suite | Tests |
 |-------|-------|
-| Unit (12 services) | 118 |
-| Integration — `UpsertOrchestrator` (FakeXrmEasy) | 9 |
-| Integration — `HttpUpsertTrigger` | 6 |
-| Integration — `SapAccountUpsertTrigger` | 13 |
-| Integration — `ServiceBusTrigger` | 5 |
-| Integration — Dependency Injection | 2 |
-| **Total** | **153** |
+| Unit (services, mappers, resilience, contracts) | 202 |
+| Integration (orchestrator, triggers, retry semantics, guards, DI) | 56 |
+| **Total** | **258** |
 
 ---
 

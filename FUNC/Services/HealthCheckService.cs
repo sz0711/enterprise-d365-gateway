@@ -1,3 +1,4 @@
+using Microsoft.Crm.Sdk.Messages;
 using Microsoft.Extensions.Logging;
 using enterprise_d365_gateway.Interfaces;
 
@@ -22,16 +23,28 @@ namespace enterprise_d365_gateway.Services
         {
             var checks = new Dictionary<string, HealthCheckEntry>();
 
-            // Dataverse connectivity
+            // Dataverse connectivity: a real round trip (WhoAmI), not just a cached
+            // client handle — a poisoned/broken client must turn readiness red.
             try
             {
                 var client = await _clientFactory.GetOrCreateServiceAsync(cancellationToken);
-                checks["dataverse"] = new HealthCheckEntry { Status = "Healthy", Detail = "ServiceClient ready." };
+                var response = (WhoAmIResponse)await client.ExecuteAsync(new WhoAmIRequest(), cancellationToken);
+                checks["dataverse"] = new HealthCheckEntry
+                {
+                    Status = "Healthy",
+                    Detail = $"WhoAmI round trip OK (org {response.OrganizationId})."
+                };
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Readiness check: Dataverse connectivity failed.");
-                checks["dataverse"] = new HealthCheckEntry { Status = "Unhealthy", Detail = ex.Message };
+                // Exception details stay in the logs; the (function-key gated)
+                // endpoint only reports the failure class.
+                checks["dataverse"] = new HealthCheckEntry
+                {
+                    Status = "Unhealthy",
+                    Detail = $"Dataverse round trip failed ({ex.GetType().Name})."
+                };
             }
 
             var overallStatus = checks.Values.All(c => c.Status == "Healthy") ? "Healthy" : "Unhealthy";

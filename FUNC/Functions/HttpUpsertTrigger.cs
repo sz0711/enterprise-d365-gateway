@@ -33,45 +33,48 @@ namespace enterprise_d365_gateway.Functions
         [Function("DataverseUpsertHttp")]
         public async Task<HttpResponseData> RunAsync([HttpTrigger(AuthorizationLevel.Function, "post", Route = "upsert")] HttpRequestData req)
         {
-            var correlationId = req.Headers.TryGetValues("x-correlation-id", out var headerValues)
-                ? headerValues.FirstOrDefault() ?? Guid.NewGuid().ToString("N")
-                : Guid.NewGuid().ToString("N");
+            var correlationId = HttpResponseWriter.ResolveCorrelationId(req);
 
             _logger.LogInformation("DataverseUpsertHttp triggered. CorrelationId={CorrelationId}", correlationId);
 
-            // Guard: request body size
-            if (req.Body.CanSeek && req.Body.Length > _options.MaxRequestBytes)
+            // Guard: request body size (declared length fast path + hard read limit)
+            if (RequestBodyGuard.ExceedsDeclaredLength(req, _options.MaxRequestBytes))
             {
                 _logger.LogWarning(
-                    "Request body too large ({BodySize} bytes, limit {Limit}). CorrelationId={CorrelationId}",
-                    req.Body.Length, _options.MaxRequestBytes, correlationId);
-                var tooLargeResponse = req.CreateResponse((HttpStatusCode)413);
-                tooLargeResponse.Headers.Add("x-correlation-id", correlationId);
-                await tooLargeResponse.WriteStringAsync($"Request body exceeds the maximum allowed size of {_options.MaxRequestBytes} bytes.");
-                return tooLargeResponse;
+                    "Request body too large (limit {Limit} bytes). CorrelationId={CorrelationId}",
+                    _options.MaxRequestBytes, correlationId);
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, (HttpStatusCode)413,
+                    $"Request body exceeds the maximum allowed size of {_options.MaxRequestBytes} bytes.",
+                    correlationId);
             }
 
             UpsertBatchRequest payload;
             try
             {
-                payload = await JsonSerializer.DeserializeAsync<UpsertBatchRequest>(req.Body, DeserializeOptions)
-                    ?? throw new InvalidOperationException("Invalid payload body.");
+                var limitedBody = RequestBodyGuard.LimitBody(req.Body, _options.MaxRequestBytes);
+                payload = await JsonSerializer.DeserializeAsync<UpsertBatchRequest>(limitedBody, DeserializeOptions)
+                    ?? throw new JsonException("Request body must contain a JSON object.");
             }
-            catch (Exception ex)
+            catch (RequestBodyTooLargeException ex)
             {
-                _logger.LogError(ex, "Cannot parse request body. CorrelationId={CorrelationId}", correlationId);
-                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                badResponse.Headers.Add("x-correlation-id", correlationId);
-                await badResponse.WriteStringAsync($"Invalid request: {ex.Message}");
-                return badResponse;
+                _logger.LogWarning(
+                    "Request body too large while reading (limit {Limit} bytes). CorrelationId={CorrelationId}",
+                    _options.MaxRequestBytes, correlationId);
+                return await HttpResponseWriter.WriteErrorAsync(req, (HttpStatusCode)413, ex.Message, correlationId);
+            }
+            catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
+            {
+                _logger.LogWarning(ex, "Cannot parse request body. CorrelationId={CorrelationId}", correlationId);
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, HttpStatusCode.BadRequest, $"Invalid request: {ex.Message}", correlationId);
             }
 
             if (payload.Payloads == null || payload.Payloads.Count == 0)
             {
-                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                badResponse.Headers.Add("x-correlation-id", correlationId);
-                await badResponse.WriteStringAsync("Invalid request: Payloads must contain at least one item.");
-                return badResponse;
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, HttpStatusCode.BadRequest,
+                    "Invalid request: Payloads must contain at least one item.", correlationId);
             }
 
             if (payload.Payloads.Count > _options.MaxBatchItems)
@@ -79,10 +82,20 @@ namespace enterprise_d365_gateway.Functions
                 _logger.LogWarning(
                     "Batch too large ({Count} items, limit {Limit}). CorrelationId={CorrelationId}",
                     payload.Payloads.Count, _options.MaxBatchItems, correlationId);
-                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                badResponse.Headers.Add("x-correlation-id", correlationId);
-                await badResponse.WriteStringAsync($"Invalid request: Payloads count ({payload.Payloads.Count}) exceeds the maximum of {_options.MaxBatchItems}.");
-                return badResponse;
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, HttpStatusCode.BadRequest,
+                    $"Invalid request: Payloads count ({payload.Payloads.Count}) exceeds the maximum of {_options.MaxBatchItems}.",
+                    correlationId);
+            }
+
+            // Batch-level lookup depth applies to every payload without its own value.
+            if (payload.MaxLookupDepth.HasValue)
+            {
+                foreach (var item in payload.Payloads)
+                {
+                    if (item != null)
+                        item.MaxLookupDepth ??= payload.MaxLookupDepth;
+                }
             }
 
             IReadOnlyList<UpsertResult> result;
@@ -92,18 +105,15 @@ namespace enterprise_d365_gateway.Functions
             }
             catch (OperationCanceledException)
             {
-                var timeoutResponse = req.CreateResponse(HttpStatusCode.RequestTimeout);
-                timeoutResponse.Headers.Add("x-correlation-id", correlationId);
-                await timeoutResponse.WriteStringAsync("Request was canceled.");
-                return timeoutResponse;
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, HttpStatusCode.RequestTimeout, "Request was canceled.", correlationId);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unhandled upsert exception. CorrelationId={CorrelationId}", correlationId);
-                var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
-                errorResponse.Headers.Add("x-correlation-id", correlationId);
-                await errorResponse.WriteStringAsync("Internal server error while processing upsert request.");
-                return errorResponse;
+                return await HttpResponseWriter.WriteErrorAsync(
+                    req, HttpStatusCode.InternalServerError,
+                    "Internal server error while processing upsert request.", correlationId);
             }
 
             int failures = 0, validationFailures = 0;
@@ -128,11 +138,11 @@ namespace enterprise_d365_gateway.Functions
                 validationFailures,
                 technicalFailures);
 
-            var response = req.CreateResponse(statusCode);
-            response.Headers.Add("Content-Type", "application/json");
-            response.Headers.Add("x-correlation-id", correlationId);
-            await response.WriteStringAsync(JsonSerializer.Serialize(result));
-            return response;
+            var retryAfter = statusCode == HttpStatusCode.TooManyRequests
+                ? _options.RateLimitRetryDelaySeconds
+                : (int?)null;
+
+            return await HttpResponseWriter.WriteJsonAsync(req, statusCode, result, correlationId, retryAfter);
         }
     }
 }

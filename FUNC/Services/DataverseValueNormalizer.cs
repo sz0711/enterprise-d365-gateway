@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace enterprise_d365_gateway.Services
@@ -15,7 +16,7 @@ namespace enterprise_d365_gateway.Services
                 JsonValueKind.True => true,
                 JsonValueKind.False => false,
                 JsonValueKind.String when element.TryGetGuid(out var guidValue) => guidValue,
-                JsonValueKind.String when element.TryGetDateTimeOffset(out var dtoValue) => dtoValue.UtcDateTime,
+                JsonValueKind.String when TryParseUtcDateTime(element.GetString(), out var dtValue) => dtValue,
                 JsonValueKind.String => element.GetString(),
                 JsonValueKind.Number when element.TryGetInt32(out var intValue) => intValue,
                 JsonValueKind.Number when element.TryGetInt64(out var longValue) => longValue,
@@ -26,6 +27,32 @@ namespace enterprise_d365_gateway.Services
                     .ToDictionary(p => p.Name, p => Normalize(p.Value)),
                 _ => element.ToString()
             };
+        }
+
+        /// <summary>
+        /// Parses ISO-8601 date strings deterministically: offset-less values are
+        /// interpreted as UTC (never as the host's local timezone), so stored
+        /// instants and key signatures are identical on every machine.
+        /// Only strict ISO-8601 shapes are accepted to avoid coercing ordinary
+        /// strings (e.g. "2024-01" account numbers stay strings).
+        /// </summary>
+        internal static bool TryParseUtcDateTime(string? text, out DateTime result)
+        {
+            result = default;
+            if (string.IsNullOrEmpty(text) || text.Length < 10 || text[4] != '-' || text[7] != '-')
+                return false;
+
+            if (!DateTimeOffset.TryParse(
+                    text,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var dto))
+            {
+                return false;
+            }
+
+            result = dto.UtcDateTime;
+            return true;
         }
     }
 }

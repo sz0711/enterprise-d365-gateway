@@ -9,10 +9,17 @@ namespace enterprise_d365_gateway.Services
         public SapMappingResult Map(SapAccountWithContactsRequest request)
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
+
+            var errors = new List<string>();
             if (string.IsNullOrWhiteSpace(request.AccountNumber))
-                throw new PayloadValidationException(new[] { "AccountNumber is required." });
+                errors.Add("AccountNumber is required.");
             if (string.IsNullOrWhiteSpace(request.Name))
-                throw new PayloadValidationException(new[] { "Name is required." });
+                errors.Add("Name is required.");
+
+            ValidateContacts(request.Contacts, errors);
+
+            if (errors.Count > 0)
+                throw new PayloadValidationException(errors);
 
             var result = new SapMappingResult
             {
@@ -21,15 +28,19 @@ namespace enterprise_d365_gateway.Services
 
             if (request.Contacts != null)
             {
-                foreach (var contact in request.Contacts)
+                for (int i = 0; i < request.Contacts.Count; i++)
                 {
+                    var contact = request.Contacts[i];
                     result.ContactPayloads.Add(MapContact(contact, request.AccountNumber));
+
+                    if (contact.IsPrimary)
+                        result.PrimaryContactIndex = i;
                 }
             }
 
-            var primaryContact = request.Contacts?.FirstOrDefault(c => c.IsPrimary);
-            if (primaryContact != null)
+            if (result.PrimaryContactIndex.HasValue)
             {
+                var primaryContact = request.Contacts![result.PrimaryContactIndex.Value];
                 result.PrimaryContactLinkPayload = new UpsertPayload
                 {
                     EntityLogicalName = Account.EntityLogicalName,
@@ -48,6 +59,42 @@ namespace enterprise_d365_gateway.Services
             }
 
             return result;
+        }
+
+        private static void ValidateContacts(IList<SapContact>? contacts, List<string> errors)
+        {
+            if (contacts == null || contacts.Count == 0)
+                return;
+
+            var seenEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var primaryCount = 0;
+
+            for (int i = 0; i < contacts.Count; i++)
+            {
+                var contact = contacts[i];
+                if (contact == null)
+                {
+                    errors.Add($"Contacts[{i}]: must not be null.");
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(contact.Email))
+                    errors.Add($"Contacts[{i}]: Email is required (used as the contact key).");
+                else if (!seenEmails.Add(contact.Email.Trim()))
+                    errors.Add($"Contacts[{i}]: duplicate Email '{contact.Email}' — contact keys must be unique per request.");
+
+                if (string.IsNullOrWhiteSpace(contact.FirstName))
+                    errors.Add($"Contacts[{i}]: FirstName is required.");
+
+                if (string.IsNullOrWhiteSpace(contact.LastName))
+                    errors.Add($"Contacts[{i}]: LastName is required.");
+
+                if (contact.IsPrimary)
+                    primaryCount++;
+            }
+
+            if (primaryCount > 1)
+                errors.Add($"Exactly one contact may be marked IsPrimary (found {primaryCount}).");
         }
 
         private static UpsertPayload MapContact(SapContact contact, string accountNumber)

@@ -23,9 +23,7 @@ namespace enterprise_d365_gateway.Functions
         public async Task<HttpResponseData> RunAsync(
             [HttpTrigger(AuthorizationLevel.Function, "get", Route = "diagnostics/runtime")] HttpRequestData req)
         {
-            var correlationId = req.Headers.TryGetValues("x-correlation-id", out var headerValues)
-                ? headerValues.FirstOrDefault() ?? Guid.NewGuid().ToString("N")
-                : Guid.NewGuid().ToString("N");
+            var correlationId = HttpResponseWriter.ResolveCorrelationId(req);
 
             // Force-load critical assemblies so the response reflects actual runtime binding.
             _ = typeof(ServiceClient).Assembly;
@@ -91,11 +89,7 @@ namespace enterprise_d365_gateway.Functions
 
             _logger.LogInformation("Runtime diagnostics requested. CorrelationId={CorrelationId}", correlationId);
 
-            var response = req.CreateResponse(System.Net.HttpStatusCode.OK);
-            response.Headers.Add("Content-Type", "application/json");
-            response.Headers.Add("x-correlation-id", correlationId);
-            await response.WriteStringAsync(JsonSerializer.Serialize(payload));
-            return response;
+            return await HttpResponseWriter.WriteJsonAsync(req, System.Net.HttpStatusCode.OK, payload, correlationId);
         }
 
         private static string SafeGetAssemblyLocation(Assembly assembly)

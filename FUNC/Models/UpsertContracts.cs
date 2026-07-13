@@ -47,6 +47,13 @@ namespace enterprise_d365_gateway.Models
         public ErrorCategory ErrorCategory { get; set; }
         public IList<string>? ValidationErrors { get; set; }
         public IList<LookupTrace>? LookupTraces { get; set; }
+
+        /// <summary>
+        /// Internal-only: the original exception for orchestrator retry decisions.
+        /// Cleared before results leave the orchestrator; never serialized.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Exception? Exception { get; set; }
     }
 
     public class LookupTrace

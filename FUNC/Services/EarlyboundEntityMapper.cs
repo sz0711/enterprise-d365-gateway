@@ -10,8 +10,16 @@ namespace enterprise_d365_gateway.Services
 {
     public class EarlyboundEntityMapper : IEarlyboundEntityMapper
     {
+        /// <summary>
+        /// Attribute-name prefixes that must never be writable through the
+        /// gateway (portal identity secrets such as adx_identity_passwordhash).
+        /// </summary>
+        private static readonly string[] RestrictedAttributePrefixes = { "adx_identity_" };
+
+        private readonly record struct AttributeInfo(string LogicalName, Type Type);
+
         private readonly IReadOnlyDictionary<string, Type> _entityTypeByLogicalName;
-        private readonly IReadOnlyDictionary<Type, IReadOnlyDictionary<string, Type>> _attributeTypeByEntityType;
+        private readonly IReadOnlyDictionary<Type, IReadOnlyDictionary<string, AttributeInfo>> _attributeInfoByEntityType;
 
         public EarlyboundEntityMapper()
         {
@@ -33,10 +41,10 @@ namespace enterprise_d365_gateway.Services
                 x => x.Type,
                 StringComparer.OrdinalIgnoreCase);
 
-            _attributeTypeByEntityType = entityTypes
+            _attributeInfoByEntityType = entityTypes
                 .Select(x => x.Type)
                 .Distinct()
-                .ToDictionary(t => t, BuildAttributeTypeMap);
+                .ToDictionary(t => t, BuildAttributeInfoMap);
         }
 
         public void ValidatePayload(UpsertPayload payload)
@@ -46,7 +54,7 @@ namespace enterprise_d365_gateway.Services
 
         public Entity MapToEntity(UpsertPayload payload)
         {
-            var (entityType, attributeTypeMap) = ValidateAndGetEntityMetadata(payload);
+            var (entityType, attributeInfoMap) = ValidateAndGetEntityMetadata(payload);
 
             var entity = (Entity)Activator.CreateInstance(entityType)!;
 
@@ -57,9 +65,8 @@ namespace enterprise_d365_gateway.Services
 
             foreach (var kvp in payload.Attributes)
             {
-                var attributeName = kvp.Key;
-                var expectedType = attributeTypeMap[attributeName];
-                entity[attributeName] = ConvertToExpectedType(kvp.Value, expectedType, attributeName);
+                var info = attributeInfoMap[kvp.Key];
+                entity[info.LogicalName] = ConvertToExpectedType(kvp.Value, info.Type, info.LogicalName);
             }
 
             if (payload.KeyAttributes != null)
@@ -71,18 +78,109 @@ namespace enterprise_d365_gateway.Services
                         continue;
                     }
 
-                    var expectedType = attributeTypeMap[keyAttribute.Key];
-                    entity[keyAttribute.Key] = ConvertToExpectedType(
+                    var info = attributeInfoMap[keyAttribute.Key];
+                    entity[info.LogicalName] = ConvertToExpectedType(
                         keyAttribute.Value,
-                        expectedType,
-                        keyAttribute.Key);
+                        info.Type,
+                        info.LogicalName);
                 }
             }
 
             return entity;
         }
 
-        private (Type EntityType, IReadOnlyDictionary<string, Type> AttributeTypeMap) ValidateAndGetEntityMetadata(UpsertPayload payload)
+        public IReadOnlyList<string> ValidateLookup(string path, LookupDefinition lookup)
+        {
+            var errors = new List<string>();
+
+            if (!_entityTypeByLogicalName.TryGetValue(lookup.EntityLogicalName, out var entityType)
+                || !_attributeInfoByEntityType.TryGetValue(entityType, out var attributeInfoMap))
+            {
+                errors.Add($"{path}: Entity '{lookup.EntityLogicalName}' does not exist in the early-bound model.");
+                return errors;
+            }
+
+            foreach (var keyAttribute in lookup.KeyAttributes)
+            {
+                ValidateAttributeName(attributeInfoMap, keyAttribute.Key, lookup.EntityLogicalName, $"{path}.KeyAttributes", errors);
+            }
+
+            if (lookup.CreateAttributes != null)
+            {
+                foreach (var createAttribute in lookup.CreateAttributes)
+                {
+                    ValidateAttributeName(attributeInfoMap, createAttribute.Key, lookup.EntityLogicalName, $"{path}.CreateAttributes", errors);
+                }
+            }
+
+            return errors;
+        }
+
+        public object? ConvertQueryValue(string entityLogicalName, string attributeName, object? value)
+        {
+            if (!TryGetAttributeInfo(entityLogicalName, attributeName, out var info))
+            {
+                return DataverseValueNormalizer.Normalize(value);
+            }
+
+            var converted = ConvertToExpectedType(value, info.Type, info.LogicalName);
+
+            // QueryExpression conditions want raw primitives, not SDK wrappers.
+            return converted switch
+            {
+                OptionSetValue osv => osv.Value,
+                Money money => money.Value,
+                EntityReference reference => reference.Id,
+                _ => converted
+            };
+        }
+
+        public object? ConvertWriteValue(string entityLogicalName, string attributeName, object? value)
+        {
+            if (!TryGetAttributeInfo(entityLogicalName, attributeName, out var info))
+            {
+                return DataverseValueNormalizer.Normalize(value);
+            }
+
+            return ConvertToExpectedType(value, info.Type, info.LogicalName);
+        }
+
+        private bool TryGetAttributeInfo(string entityLogicalName, string attributeName, out AttributeInfo info)
+        {
+            info = default;
+            return _entityTypeByLogicalName.TryGetValue(entityLogicalName, out var entityType)
+                && _attributeInfoByEntityType.TryGetValue(entityType, out var attributeInfoMap)
+                && attributeInfoMap.TryGetValue(attributeName, out info);
+        }
+
+        private static void ValidateAttributeName(
+            IReadOnlyDictionary<string, AttributeInfo> attributeInfoMap,
+            string attributeName,
+            string entityLogicalName,
+            string path,
+            List<string> errors)
+        {
+            if (!attributeInfoMap.ContainsKey(attributeName))
+            {
+                errors.Add($"{path}: Field '{attributeName}' is not defined on entity '{entityLogicalName}'.");
+            }
+            else if (IsRestrictedAttribute(attributeName))
+            {
+                errors.Add($"{path}: Field '{attributeName}' is not writable through this endpoint.");
+            }
+        }
+
+        private static bool IsRestrictedAttribute(string attributeName)
+        {
+            foreach (var prefix in RestrictedAttributePrefixes)
+            {
+                if (attributeName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        private (Type EntityType, IReadOnlyDictionary<string, AttributeInfo> AttributeInfoMap) ValidateAndGetEntityMetadata(UpsertPayload payload)
         {
             if (payload == null) throw new ArgumentNullException(nameof(payload));
             if (string.IsNullOrWhiteSpace(payload.EntityLogicalName))
@@ -98,7 +196,7 @@ namespace enterprise_d365_gateway.Services
                 });
             }
 
-            if (!_attributeTypeByEntityType.TryGetValue(entityType, out var attributeTypeMap))
+            if (!_attributeInfoByEntityType.TryGetValue(entityType, out var attributeInfoMap))
             {
                 throw new PayloadValidationException(new[]
                 {
@@ -110,16 +208,22 @@ namespace enterprise_d365_gateway.Services
 
             foreach (var kvp in payload.Attributes)
             {
-                if (!attributeTypeMap.TryGetValue(kvp.Key, out var expectedType))
+                if (!attributeInfoMap.TryGetValue(kvp.Key, out var info))
                 {
                     validationErrors.Add($"Field '{kvp.Key}' is not defined on entity '{payload.EntityLogicalName}'.");
                     continue;
                 }
 
-                if (!IsValueCompatible(expectedType, kvp.Value))
+                if (IsRestrictedAttribute(kvp.Key))
+                {
+                    validationErrors.Add($"Field '{kvp.Key}' is not writable through this endpoint.");
+                    continue;
+                }
+
+                if (!IsValueCompatible(info.Type, kvp.Value))
                 {
                     validationErrors.Add(
-                        $"Field '{kvp.Key}' has invalid type. Expected '{GetFriendlyTypeName(expectedType)}'.");
+                        $"Field '{kvp.Key}' has invalid type. Expected '{GetFriendlyTypeName(info.Type)}'.");
                 }
             }
 
@@ -131,17 +235,24 @@ namespace enterprise_d365_gateway.Services
             {
                 foreach (var keyAttribute in payload.KeyAttributes)
                 {
-                    if (!attributeTypeMap.TryGetValue(keyAttribute.Key, out var keyType))
+                    if (!attributeInfoMap.TryGetValue(keyAttribute.Key, out var keyInfo))
                     {
                         validationErrors.Add(
                             $"KeyAttribute '{keyAttribute.Key}' is not defined on entity '{payload.EntityLogicalName}'.");
                         continue;
                     }
 
-                    if (!IsValueCompatible(keyType, keyAttribute.Value))
+                    if (IsRestrictedAttribute(keyAttribute.Key))
                     {
                         validationErrors.Add(
-                            $"KeyAttribute '{keyAttribute.Key}' has invalid type. Expected '{GetFriendlyTypeName(keyType)}'.");
+                            $"KeyAttribute '{keyAttribute.Key}' is not usable through this endpoint.");
+                        continue;
+                    }
+
+                    if (!IsValueCompatible(keyInfo.Type, keyAttribute.Value))
+                    {
+                        validationErrors.Add(
+                            $"KeyAttribute '{keyAttribute.Key}' has invalid type. Expected '{GetFriendlyTypeName(keyInfo.Type)}'.");
                     }
 
                     if (payload.Attributes.ContainsKey(keyAttribute.Key))
@@ -157,12 +268,12 @@ namespace enterprise_d365_gateway.Services
                 throw new PayloadValidationException(validationErrors);
             }
 
-            return (entityType, attributeTypeMap);
+            return (entityType, attributeInfoMap);
         }
 
-        private static IReadOnlyDictionary<string, Type> BuildAttributeTypeMap(Type entityType)
+        private static IReadOnlyDictionary<string, AttributeInfo> BuildAttributeInfoMap(Type entityType)
         {
-            var result = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
+            var result = new Dictionary<string, AttributeInfo>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var property in entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
             {
@@ -172,15 +283,16 @@ namespace enterprise_d365_gateway.Services
                     continue;
                 }
 
+                var logicalName = logicalNameAttribute.LogicalName;
                 var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
 
                 if (typeof(Entity).IsAssignableFrom(propertyType) && propertyType != typeof(Entity))
                 {
-                    result[logicalNameAttribute.LogicalName] = typeof(EntityReference);
+                    result[logicalName] = new AttributeInfo(logicalName, typeof(EntityReference));
                 }
                 else
                 {
-                    result[logicalNameAttribute.LogicalName] = propertyType;
+                    result[logicalName] = new AttributeInfo(logicalName, propertyType);
                 }
             }
 
@@ -205,6 +317,12 @@ namespace enterprise_d365_gateway.Services
             {
                 return IsJsonElementCompatible(normalizedExpected, jsonElement);
             }
+
+            // Early-bound choice columns are generated as enums but stored as OptionSetValue.
+            if (normalizedExpected.IsEnum)
+                return value is OptionSetValue
+                    || value is byte or short or int
+                    || (value is string enumName && Enum.TryParse(normalizedExpected, enumName, ignoreCase: true, out _));
 
             if (normalizedExpected == typeof(string))
                 return value is string;
@@ -233,7 +351,7 @@ namespace enterprise_d365_gateway.Services
             if (normalizedExpected == typeof(DateTime))
                 return value is DateTime
                     || value is DateTimeOffset
-                    || (value is string dateString && DateTimeOffset.TryParse(dateString, out _));
+                    || (value is string dateString && DataverseValueNormalizer.TryParseUtcDateTime(dateString, out _));
 
             if (normalizedExpected == typeof(Money))
                 return value is Money
@@ -255,6 +373,17 @@ namespace enterprise_d365_gateway.Services
 
         private static bool IsJsonElementCompatible(Type expectedType, JsonElement element)
         {
+            if (expectedType.IsEnum)
+            {
+                return element.ValueKind switch
+                {
+                    JsonValueKind.Null or JsonValueKind.Undefined => true,
+                    JsonValueKind.Number => element.TryGetInt32(out _),
+                    JsonValueKind.String => Enum.TryParse(expectedType, element.GetString(), ignoreCase: true, out _),
+                    _ => false
+                };
+            }
+
             return element.ValueKind switch
             {
                 JsonValueKind.Null or JsonValueKind.Undefined => true,
@@ -298,12 +427,23 @@ namespace enterprise_d365_gateway.Services
 
             if (normalizedExpected.IsInstanceOfType(value))
             {
+                // Early-bound enum instances are stored as OptionSetValue in the attribute collection.
+                if (normalizedExpected.IsEnum)
+                    return new OptionSetValue(Convert.ToInt32(value));
                 return value;
             }
 
             if (value is JsonElement jsonElement)
             {
                 return ConvertJsonElementToExpectedType(jsonElement, normalizedExpected, attributeName);
+            }
+
+            if (normalizedExpected.IsEnum)
+            {
+                if (value is OptionSetValue existingOsv) return existingOsv;
+                if (value is byte or short or int) return new OptionSetValue(Convert.ToInt32(value));
+                if (value is string enumName && Enum.TryParse(normalizedExpected, enumName, ignoreCase: true, out var parsedEnum))
+                    return new OptionSetValue(Convert.ToInt32(parsedEnum));
             }
 
             if (normalizedExpected == typeof(string))
@@ -337,8 +477,8 @@ namespace enterprise_d365_gateway.Services
             {
                 if (value is DateTime dt) return dt;
                 if (value is DateTimeOffset dto) return dto.UtcDateTime;
-                if (value is string dateString && DateTimeOffset.TryParse(dateString, out var parsedDto))
-                    return parsedDto.UtcDateTime;
+                if (value is string dateString && DataverseValueNormalizer.TryParseUtcDateTime(dateString, out var parsedDt))
+                    return parsedDt;
             }
 
             if (normalizedExpected == typeof(Money))
@@ -378,6 +518,15 @@ namespace enterprise_d365_gateway.Services
 
             try
             {
+                if (expectedType.IsEnum)
+                {
+                    if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var enumInt))
+                        return new OptionSetValue(enumInt);
+                    if (element.ValueKind == JsonValueKind.String
+                        && Enum.TryParse(expectedType, element.GetString(), ignoreCase: true, out var parsedEnum))
+                        return new OptionSetValue(Convert.ToInt32(parsedEnum));
+                }
+
                 if (expectedType == typeof(string))
                 {
                     return element.ValueKind == JsonValueKind.String
@@ -430,9 +579,9 @@ namespace enterprise_d365_gateway.Services
                 if (expectedType == typeof(DateTime))
                 {
                     if (element.ValueKind == JsonValueKind.String &&
-                        DateTimeOffset.TryParse(element.GetString(), out var dto))
+                        DataverseValueNormalizer.TryParseUtcDateTime(element.GetString(), out var parsedDt))
                     {
-                        return dto.UtcDateTime;
+                        return parsedDt;
                     }
                 }
 
@@ -501,6 +650,7 @@ namespace enterprise_d365_gateway.Services
         {
             var normalized = Nullable.GetUnderlyingType(type) ?? type;
 
+            if (normalized.IsEnum) return $"OptionSetValue ({normalized.Name})";
             if (normalized == typeof(string)) return "string";
             if (normalized == typeof(Guid)) return "guid";
             if (normalized == typeof(bool)) return "bool";

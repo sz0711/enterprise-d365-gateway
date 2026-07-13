@@ -9,29 +9,33 @@ namespace enterprise_d365_gateway.Services
     {
         private readonly IEntityMappingCache _cache;
         private readonly IEntityUpsertExecutor _executor;
+        private readonly IEarlyboundEntityMapper _mapper;
         private readonly ILogger<ExternalIdResolver> _logger;
 
         public ExternalIdResolver(
             IEntityMappingCache cache,
             IEntityUpsertExecutor executor,
+            IEarlyboundEntityMapper mapper,
             ILogger<ExternalIdResolver> logger)
         {
             _cache = cache;
             _executor = executor;
+            _mapper = mapper;
             _logger = logger;
         }
 
         public async Task<Guid?> ResolveAsync(
             string entityLogicalName,
             IDictionary<string, object?> keyAttributes,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? keySignature = null)
         {
             if (keyAttributes == null || keyAttributes.Count == 0)
             {
                 return null;
             }
 
-            var keySignature = KeyAttributesFormatter.BuildSignature(entityLogicalName, keyAttributes);
+            keySignature ??= KeyAttributesFormatter.BuildSignature(entityLogicalName, keyAttributes);
 
             // Cache first
             var cached = await _cache.GetAsync(entityLogicalName, keySignature, cancellationToken);
@@ -53,9 +57,9 @@ namespace enterprise_d365_gateway.Services
             foreach (var keyAttribute in keyAttributes)
             {
                 query.Criteria.AddCondition(
-                    keyAttribute.Key,
+                    keyAttribute.Key.ToLowerInvariant(),
                     ConditionOperator.Equal,
-                    DataverseValueNormalizer.Normalize(keyAttribute.Value));
+                    _mapper.ConvertQueryValue(entityLogicalName, keyAttribute.Key, keyAttribute.Value));
             }
 
             EntityCollection results;

@@ -15,6 +15,14 @@ public class FakeHttpRequestData : HttpRequestData
         Headers = new HttpHeadersCollection();
     }
 
+    /// <summary>Wraps the body in a custom stream (e.g. non-seekable, to mimic production transports).</summary>
+    public FakeHttpRequestData(FunctionContext context, Stream body)
+        : base(context)
+    {
+        Body = body;
+        Headers = new HttpHeadersCollection();
+    }
+
     public override Stream Body { get; }
     public override HttpHeadersCollection Headers { get; }
     public override IReadOnlyCollection<IHttpCookie> Cookies { get; } = Array.Empty<IHttpCookie>();

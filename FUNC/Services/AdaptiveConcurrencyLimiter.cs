@@ -24,8 +24,10 @@ namespace enterprise_d365_gateway.Services
             IOptions<DataverseOptions> options)
         {
             var opts = options.Value;
-            _minLimit = opts.MinDegreeOfParallelism;
-            _maxLimit = opts.MaxDegreeOfParallelism;
+            // Defense in depth against Min > Max misconfiguration (also validated
+            // at startup): otherwise RecordThrottle could RAISE the limit.
+            _maxLimit = Math.Max(1, opts.MaxDegreeOfParallelism);
+            _minLimit = Math.Clamp(opts.MinDegreeOfParallelism, 1, _maxLimit);
             _successesBeforeIncrease = opts.AdaptiveConcurrencySuccessThreshold;
             _logger = logger;
 

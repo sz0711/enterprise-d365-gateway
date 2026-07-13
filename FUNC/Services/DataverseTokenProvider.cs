@@ -1,41 +1,47 @@
 using Azure.Core;
 using Azure.Identity;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using enterprise_d365_gateway.Interfaces;
+using enterprise_d365_gateway.Models;
 using System.Collections.Concurrent;
 
 namespace enterprise_d365_gateway.Services
 {
     public class DataverseTokenProvider : IDataverseTokenProvider
     {
+        private static readonly TimeSpan ExpiryBuffer = TimeSpan.FromMinutes(5);
+
         private readonly TokenCredential _credential;
         private readonly string _defaultScope;
         private readonly SemaphoreSlim _refreshLock = new(1, 1);
         private readonly ConcurrentDictionary<string, AccessToken> _cachedTokens = new(StringComparer.OrdinalIgnoreCase);
 
-        public DataverseTokenProvider(IConfiguration configuration)
+        public DataverseTokenProvider(IOptions<DataverseOptions> options)
         {
-            var clientId = configuration.GetValue<string>("Dataverse:UserAssignedManagedIdentityClientId");
-            var dataverseUrl = configuration.GetValue<string>("Dataverse:Url");
-            var configuredScope = configuration.GetValue<string>("Dataverse:Scope");
+            var opts = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
-            // If no explicit scope is configured, derive it from the Dataverse URL
-            var scope = configuredScope;
-            if (string.IsNullOrWhiteSpace(scope) && !string.IsNullOrWhiteSpace(dataverseUrl))
+            // Prefer an explicitly configured scope; otherwise derive it from the
+            // validated Dataverse URL. There is no valid wildcard fallback — an
+            // unresolvable scope is a configuration error and must fail fast.
+            if (!string.IsNullOrWhiteSpace(opts.Scope))
             {
-                var uri = new Uri(dataverseUrl);
-                scope = $"{uri.Scheme}://{uri.Host}/.default";
+                _defaultScope = opts.Scope;
             }
-            else if (string.IsNullOrWhiteSpace(scope))
+            else if (Uri.TryCreate(opts.Url, UriKind.Absolute, out var uri))
             {
-                scope = "https://*.crm.dynamics.com/.default";
+                _defaultScope = $"{uri.Scheme}://{uri.Host}/.default";
             }
-
-            _defaultScope = scope;
+            else
+            {
+                throw new InvalidOperationException(
+                    "Unable to derive a token scope: configure Dataverse:Scope or a valid Dataverse:Url.");
+            }
 
             _credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
             {
-                ManagedIdentityClientId = clientId
+                ManagedIdentityClientId = string.IsNullOrWhiteSpace(opts.UserAssignedManagedIdentityClientId)
+                    ? null
+                    : opts.UserAssignedManagedIdentityClientId
             });
         }
 
@@ -43,7 +49,7 @@ namespace enterprise_d365_gateway.Services
         {
             var scope = ResolveScope(resource);
 
-            if (_cachedTokens.TryGetValue(scope, out var cachedToken) && cachedToken.ExpiresOn > DateTimeOffset.UtcNow.AddMinutes(2))
+            if (_cachedTokens.TryGetValue(scope, out var cachedToken) && cachedToken.ExpiresOn > DateTimeOffset.UtcNow.Add(ExpiryBuffer))
             {
                 return cachedToken;
             }
@@ -51,7 +57,7 @@ namespace enterprise_d365_gateway.Services
             await _refreshLock.WaitAsync(cancellationToken);
             try
             {
-                if (_cachedTokens.TryGetValue(scope, out cachedToken) && cachedToken.ExpiresOn > DateTimeOffset.UtcNow.AddMinutes(2))
+                if (_cachedTokens.TryGetValue(scope, out cachedToken) && cachedToken.ExpiresOn > DateTimeOffset.UtcNow.Add(ExpiryBuffer))
                 {
                     return cachedToken;
                 }

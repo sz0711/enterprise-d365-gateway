@@ -117,22 +117,44 @@ namespace enterprise_d365_gateway.Services
         {
             var result = await ExecuteSingleAsync(payload, cancellationToken);
 
-            // Retry on Transient OR Permanent: a stale cached GUID can cause a
-            // "permanent" duplicate-key error that resolves after cache invalidation.
+            // Retry exactly the failure modes a stale cached GUID or a create race
+            // produces (duplicate record / record does not exist). Anything else —
+            // validation faults, privilege errors, genuine transients (already
+            // retried with backoff inside the executor) — must not trigger a
+            // second full upsert cycle.
             if (result.ErrorCategory is ErrorCategory.Transient or ErrorCategory.Permanent
-                && payload.KeyAttributes != null
+                && result.Exception != null
+                && _errorClassifier.IsKeyConflict(result.Exception)
+                && payload?.KeyAttributes != null
                 && payload.KeyAttributes.Count > 0)
             {
                 _externalIdResolver.Invalidate(payload.EntityLogicalName, payload.KeyAttributes);
+                InvalidateLookupCaches(payload.Lookups);
 
                 _logger.LogInformation(
-                    "Retrying upsert with invalidated cache for {Signature}",
+                    "Retrying upsert after key conflict with invalidated cache for {Signature}",
                     KeyAttributesFormatter.BuildSignature(payload.EntityLogicalName, payload.KeyAttributes));
 
                 result = await ExecuteSingleAsync(payload, cancellationToken);
             }
 
+            result.Exception = null; // internal only — never serialized
             return result;
+        }
+
+        private void InvalidateLookupCaches(IDictionary<string, LookupDefinition>? lookups)
+        {
+            if (lookups == null)
+                return;
+
+            foreach (var lookup in lookups.Values)
+            {
+                if (lookup?.KeyAttributes is { Count: > 0 })
+                {
+                    _externalIdResolver.Invalidate(lookup.EntityLogicalName, lookup.KeyAttributes);
+                    InvalidateLookupCaches(lookup.NestedLookups);
+                }
+            }
         }
 
         private async Task<UpsertResult> ExecuteSingleAsync(
@@ -146,37 +168,63 @@ namespace enterprise_d365_gateway.Services
 
                 var keySignature = KeyAttributesFormatter.BuildSignature(payload.EntityLogicalName, payload.KeyAttributes);
 
-                // 2. Acquire keyed lock
-                using var lockHandle = await _lockCoordinator.AcquireAsync(keySignature, cancellationToken);
-
-                // 3. Map to entity
+                // 2. Map to entity
                 var entity = _mapper.MapToEntity(payload);
 
-                // 4. Resolve lookups
-                var lookupTraces = new List<LookupTrace>();
+                // 3. Resolve lookups (independent of each other — run concurrently).
+                //    Done BEFORE acquiring the payload lock: lookup resolution targets
+                //    OTHER records with their own keyed locks, so nesting the lookup
+                //    locks under this payload's lock would risk a self- or ABBA deadlock
+                //    (a lookup whose key equals the payload's own, or reciprocal
+                //    references across concurrent payloads). Resolving first keeps the
+                //    lock namespaces from ever nesting.
+                List<LookupTrace>? lookupTraces = null;
                 if (payload.Lookups != null && payload.Lookups.Count > 0)
                 {
-                    var maxDepth = payload.MaxLookupDepth ?? _options.MaxLookupDepth;
+                    var maxDepth = Math.Clamp(payload.MaxLookupDepth ?? _options.MaxLookupDepth, 1, _options.MaxLookupDepth);
 
-                    foreach (var lookup in payload.Lookups)
+                    var lookupList = payload.Lookups.ToList();
+                    var resolveTasks = lookupList.Select(lookup =>
                     {
                         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        var (reference, trace) = await _lookupResolver.ResolveAsync(
+                        return _lookupResolver.ResolveAsync(
                             lookup.Key,
                             lookup.Value,
                             0,
                             maxDepth,
                             visited,
                             cancellationToken);
+                    }).ToArray();
 
-                        entity[lookup.Key] = reference;
+                    // Task.WhenAll surfaces the first exception; drain the rest so no
+                    // faulted task goes unobserved when a sibling lookup also fails.
+                    try
+                    {
+                        await Task.WhenAll(resolveTasks);
+                    }
+                    catch
+                    {
+                        foreach (var t in resolveTasks)
+                            _ = t.Exception; // observe
+                        throw;
+                    }
+
+                    lookupTraces = new List<LookupTrace>(resolveTasks.Length);
+                    for (int i = 0; i < resolveTasks.Length; i++)
+                    {
+                        var (reference, trace) = resolveTasks[i].Result;
+                        entity[lookupList[i].Key.ToLowerInvariant()] = reference;
                         lookupTraces.Add(trace);
 
                         _logger.LogInformation(
                             "Resolved lookup {Attribute} -> {Entity} {Id}",
-                            lookup.Key, reference.LogicalName, reference.Id);
+                            lookupList[i].Key, reference.LogicalName, reference.Id);
                     }
                 }
+
+                // 4. Acquire keyed lock for THIS record's upsert (serializes concurrent
+                //    upserts of the same key so they don't both create).
+                using var lockHandle = await _lockCoordinator.AcquireAsync(keySignature, cancellationToken);
 
                 // 5. Resolve by key attributes
                 if (entity.Id == Guid.Empty
@@ -186,7 +234,8 @@ namespace enterprise_d365_gateway.Services
                     var existingId = await _externalIdResolver.ResolveAsync(
                         payload.EntityLogicalName,
                         payload.KeyAttributes,
-                        cancellationToken);
+                        cancellationToken,
+                        keySignature);
 
                     if (existingId.HasValue)
                         entity.Id = existingId.Value;
@@ -225,7 +274,7 @@ namespace enterprise_d365_gateway.Services
                     keySignature,
                     id,
                     created,
-                    lookupTraces.Count > 0 ? lookupTraces : null);
+                    lookupTraces is { Count: > 0 } ? lookupTraces : null);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -238,54 +287,63 @@ namespace enterprise_d365_gateway.Services
                 _logger.LogWarning(
                     ex,
                     "Upsert failed for {Entity} (Category={Category})",
-                    payload.EntityLogicalName, category);
+                    payload?.EntityLogicalName, category);
 
                 string? keySignature = null;
-                if (!string.IsNullOrWhiteSpace(payload.EntityLogicalName)
+                if (payload != null
+                    && !string.IsNullOrWhiteSpace(payload.EntityLogicalName)
                     && payload.KeyAttributes != null
                     && payload.KeyAttributes.Count > 0)
                 {
                     keySignature = KeyAttributesFormatter.BuildSignature(payload.EntityLogicalName, payload.KeyAttributes);
                 }
 
-                return _resultMapper.MapError(
-                    payload.EntityLogicalName,
+                var errorResult = _resultMapper.MapError(
+                    payload?.EntityLogicalName ?? "<unknown>",
                     keySignature,
                     ex,
                     category);
+                errorResult.Exception = ex;
+                return errorResult;
             }
         }
 
         private void LogEntityAttributes(Entity entity)
         {
-            if (!_logger.IsEnabled(LogLevel.Information))
-                return;
-
-            if (entity.Attributes.Count == 0)
+            // Attribute VALUES may contain personal data — only emit them at
+            // Debug. The Information-level line carries names and count only.
+            if (_logger.IsEnabled(LogLevel.Debug))
             {
-                _logger.LogInformation("Entity {EntityLogicalName} has no attributes before save.", entity.LogicalName);
+                var attributes = entity.Attributes.Select(a =>
+                {
+                    var value = a.Value switch
+                    {
+                        null => "null",
+                        EntityReference er => $"EntityReference({er.LogicalName}, {er.Id})",
+                        OptionSetValue osv => $"OptionSetValue({osv.Value})",
+                        Money money => $"Money({money.Value})",
+                        OptionSetValueCollection collection =>
+                            $"OptionSetValueCollection([{string.Join(", ", collection.Select(x => x.Value))}])",
+                        _ => a.Value.ToString()
+                    };
+                    return $"{a.Key}={value}";
+                });
+
+                _logger.LogDebug(
+                    "Entity {EntityLogicalName} attributes before save: {Attributes}",
+                    entity.LogicalName,
+                    string.Join(", ", attributes));
                 return;
             }
 
-            var attributes = entity.Attributes.Select(a =>
+            if (_logger.IsEnabled(LogLevel.Information))
             {
-                var value = a.Value switch
-                {
-                    null => "null",
-                    EntityReference er => $"EntityReference({er.LogicalName}, {er.Id})",
-                    OptionSetValue osv => $"OptionSetValue({osv.Value})",
-                    Money money => $"Money({money.Value})",
-                    OptionSetValueCollection collection =>
-                        $"OptionSetValueCollection([{string.Join(", ", collection.Select(x => x.Value))}])",
-                    _ => a.Value.ToString()
-                };
-                return $"{a.Key}={value}";
-            });
-
-            _logger.LogInformation(
-                "Entity {EntityLogicalName} attributes before save: {Attributes}",
-                entity.LogicalName,
-                string.Join(", ", attributes));
+                _logger.LogInformation(
+                    "Entity {EntityLogicalName} has {AttributeCount} attributes before save: {AttributeNames}",
+                    entity.LogicalName,
+                    entity.Attributes.Count,
+                    string.Join(", ", entity.Attributes.Keys));
+            }
         }
     }
 }

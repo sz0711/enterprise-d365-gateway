@@ -32,6 +32,12 @@ builder.Services
     }, "Dataverse:Url must use the HTTPS scheme.")
     .Validate(options => options.MaxRequestBytes >= 1024, "Dataverse:MaxRequestBytes must be at least 1024 bytes.")
     .Validate(options => options.MaxBatchItems >= 1, "Dataverse:MaxBatchItems must be at least 1.")
+    .Validate(
+        options => options.MinDegreeOfParallelism <= options.MaxDegreeOfParallelism,
+        "Dataverse:MinDegreeOfParallelism must not exceed Dataverse:MaxDegreeOfParallelism.")
+    .Validate(
+        options => options.CacheMemoryBudgetMinMb <= options.CacheMemoryBudgetMaxMb,
+        "Dataverse:CacheMemoryBudgetMinMb must not exceed Dataverse:CacheMemoryBudgetMaxMb.")
     .ValidateOnStart();
 
 builder.Services.AddDataverseIntegration();

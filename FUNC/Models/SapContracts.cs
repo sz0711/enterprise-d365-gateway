@@ -29,5 +29,12 @@ namespace enterprise_d365_gateway.Models
         public required UpsertPayload AccountPayload { get; set; }
         public IList<UpsertPayload> ContactPayloads { get; set; } = new List<UpsertPayload>();
         public UpsertPayload? PrimaryContactLinkPayload { get; set; }
+
+        /// <summary>
+        /// Index (into <see cref="ContactPayloads"/>) of the contact marked
+        /// IsPrimary, when present. Lets the trigger wire the phase-2 result GUID
+        /// directly into the phase-3 link payload without a lookup round-trip.
+        /// </summary>
+        public int? PrimaryContactIndex { get; set; }
     }
 }

@@ -67,9 +67,13 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var externalIdResolver = new ExternalIdResolver(
             entityMappingCache,
             executor,
+            earlyboundMapper,
             new Mock<ILogger<ExternalIdResolver>>().Object);
         var lookupResolver = new LookupResolver(
             executor,
+            entityMappingCache,
+            earlyboundMapper,
+            lockCoordinator,
             new Mock<ILogger<LookupResolver>>().Object,
             Options.Create(_options));
 
@@ -321,6 +325,112 @@ public class UpsertOrchestratorIntegrationTests : IDisposable
         var result2 = await _sut.UpsertAsync(payload);
         result2.Id.Should().Be(existingId);
         result2.Created.Should().BeFalse();
+    }
+
+    // --- SAP GUID-injection payload shape end-to-end (real validator + mapper) ---
+    // The SAP trigger injects a raw EntityReference into Attributes and nulls
+    // Lookups (phase 2), and sets Id + an EntityReference on the link (phase 3).
+    // These run the injected shapes through the real pipeline so a future
+    // validator/mapper tightening can't silently break every SAP request.
+
+    [Fact]
+    public async Task UpsertAsync_EntityReferenceInAttributes_UpsertsSuccessfully()
+    {
+        var accountId = Guid.NewGuid();
+        _fakeXrm.Context.Initialize(new Entity("account", accountId)
+        {
+            ["accountnumber"] = "SAP-ACC",
+            ["name"] = "Parent Account"
+        });
+
+        // Phase-2 contact payload shape: parentcustomerid supplied as a resolved
+        // EntityReference directly in Attributes, no Lookups.
+        var contactPayload = new UpsertPayload
+        {
+            EntityLogicalName = "contact",
+            KeyAttributes = new Dictionary<string, object?> { ["emailaddress1"] = "sap@example.com" },
+            Attributes = new Dictionary<string, object?>
+            {
+                ["firstname"] = "Sap",
+                ["lastname"] = "Contact",
+                ["parentcustomerid"] = new EntityReference("account", accountId)
+            }
+        };
+
+        var result = await _sut.UpsertAsync(contactPayload);
+
+        result.ErrorCategory.Should().Be(ErrorCategory.None, result.ErrorMessage);
+        result.Created.Should().BeTrue();
+
+        var stored = _fakeXrm.Service.Retrieve("contact", result.Id, new ColumnSet("parentcustomerid"));
+        stored.GetAttributeValue<EntityReference>("parentcustomerid").Id.Should().Be(accountId);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_PhaseThreeLinkShape_IdAndPrimaryContactReference_Updates()
+    {
+        var accountId = Guid.NewGuid();
+        var contactId = Guid.NewGuid();
+        _fakeXrm.Context.Initialize(new List<Entity>
+        {
+            new("account", accountId) { ["accountnumber"] = "SAP-LINK", ["name"] = "Link Account" },
+            new("contact", contactId) { ["emailaddress1"] = "primary@example.com" }
+        });
+
+        // Phase-3 link payload shape: Id preset (skips key resolution),
+        // primarycontactid as a resolved EntityReference, no Lookups.
+        var linkPayload = new UpsertPayload
+        {
+            EntityLogicalName = "account",
+            Id = accountId,
+            KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "SAP-LINK" },
+            Attributes = new Dictionary<string, object?>
+            {
+                ["primarycontactid"] = new EntityReference("contact", contactId)
+            }
+        };
+
+        var result = await _sut.UpsertAsync(linkPayload);
+
+        result.ErrorCategory.Should().Be(ErrorCategory.None, result.ErrorMessage);
+        result.Id.Should().Be(accountId);
+        result.Created.Should().BeFalse();
+
+        var stored = _fakeXrm.Service.Retrieve("account", accountId, new ColumnSet("primarycontactid"));
+        stored.GetAttributeValue<EntityReference>("primarycontactid").Id.Should().Be(contactId);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_SelfReferencingLookup_DoesNotDeadlock()
+    {
+        // Regression guard: a lookup whose key equals the payload's OWN signature
+        // must not self-deadlock (lookups resolve before the payload lock is taken).
+        _fakeXrm.Context.Initialize(new Entity("account", Guid.NewGuid())
+        {
+            ["accountnumber"] = "SELF-1",
+            ["name"] = "Self Parent"
+        });
+
+        var payload = new UpsertPayload
+        {
+            EntityLogicalName = "account",
+            KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "SELF-1" },
+            Attributes = new Dictionary<string, object?> { ["name"] = "Self Ref" },
+            Lookups = new Dictionary<string, LookupDefinition>
+            {
+                ["parentaccountid"] = new LookupDefinition
+                {
+                    EntityLogicalName = "account",
+                    KeyAttributes = new Dictionary<string, object?> { ["accountnumber"] = "SELF-1" }
+                }
+            }
+        };
+
+        // Bounded by a generous timeout: a deadlock would hang until this fires.
+        var result = await _sut.UpsertAsync(payload).WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.ErrorCategory.Should().Be(ErrorCategory.None, result.ErrorMessage);
+        result.LookupTraces.Should().ContainSingle();
     }
 }
 

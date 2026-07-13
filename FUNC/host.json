@@ -1,5 +1,6 @@
 {
     "version": "2.0",
+    "functionTimeout": "00:10:00",
     "logging": {
         "applicationInsights": {
             "samplingSettings": {
@@ -7,6 +8,12 @@
                 "excludedTypes": "Request"
             },
             "enableLiveMetricsFilters": true
+        }
+    },
+    "extensions": {
+        "serviceBus": {
+            "maxConcurrentCalls": 4,
+            "maxAutoLockRenewalDuration": "00:10:00"
         }
     }
 }

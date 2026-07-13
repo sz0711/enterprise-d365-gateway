@@ -16,7 +16,7 @@ public class ExternalIdResolverTests
 
     public ExternalIdResolverTests()
     {
-        _sut = new ExternalIdResolver(_cacheMock.Object, _executorMock.Object, _loggerMock.Object);
+        _sut = new ExternalIdResolver(_cacheMock.Object, _executorMock.Object, new EarlyboundEntityMapper(), _loggerMock.Object);
     }
 
     [Fact]

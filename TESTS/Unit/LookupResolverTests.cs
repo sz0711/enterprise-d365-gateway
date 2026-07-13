@@ -13,6 +13,7 @@ namespace enterprise_d365_gateway.Tests.Unit;
 public class LookupResolverTests
 {
     private readonly Mock<IEntityUpsertExecutor> _executorMock = new();
+    private readonly Mock<IEntityMappingCache> _cacheMock = new();
     private readonly Mock<ILogger<LookupResolver>> _loggerMock = new();
     private readonly DataverseOptions _options = new() { MaxLookupDepth = 3 };
     private readonly LookupResolver _sut;
@@ -21,6 +22,9 @@ public class LookupResolverTests
     {
         _sut = new LookupResolver(
             _executorMock.Object,
+            _cacheMock.Object,
+            new EarlyboundEntityMapper(),
+            new UpsertLockCoordinator(),
             _loggerMock.Object,
             Options.Create(_options));
     }

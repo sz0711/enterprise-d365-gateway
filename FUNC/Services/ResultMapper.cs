@@ -53,15 +53,32 @@ namespace enterprise_d365_gateway.Services
             if (results == null || results.Count == 0)
                 return HttpStatusCode.OK;
 
-            var hasTechnical = results.Any(r =>
-                r.ErrorCategory is ErrorCategory.Transient
-                    or ErrorCategory.Permanent
-                    or ErrorCategory.Throttling);
+            bool hasThrottling = false, hasOtherTechnical = false, hasValidation = false;
+            foreach (var r in results)
+            {
+                switch (r.ErrorCategory)
+                {
+                    case ErrorCategory.Throttling:
+                        hasThrottling = true;
+                        break;
+                    case ErrorCategory.Transient:
+                    case ErrorCategory.Permanent:
+                    case ErrorCategory.Cancellation:
+                        hasOtherTechnical = true;
+                        break;
+                    case ErrorCategory.Validation:
+                        hasValidation = true;
+                        break;
+                }
+            }
 
-            if (hasTechnical)
+            if (hasOtherTechnical)
                 return HttpStatusCode.InternalServerError;
 
-            var hasValidation = results.Any(r => r.ErrorCategory == ErrorCategory.Validation);
+            // Only-throttled batches are retryable by the caller — say so.
+            if (hasThrottling)
+                return HttpStatusCode.TooManyRequests;
+
             if (hasValidation)
                 return HttpStatusCode.BadRequest;
 

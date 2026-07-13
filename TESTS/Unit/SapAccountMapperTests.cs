@@ -160,7 +160,7 @@ public class SapAccountMapperTests
         contact.Lookups.Should().NotBeNull();
         contact.Lookups!.Should().ContainKey("parentcustomerid");
 
-        var lookup = contact.Lookups["parentcustomerid"];
+        var lookup = contact.Lookups!["parentcustomerid"];
         lookup.EntityLogicalName.Should().Be("account");
         lookup.KeyAttributes.Should().ContainKey("accountnumber").WhoseValue.Should().Be("SAP-100");
         lookup.CreateIfNotExists.Should().BeFalse();
@@ -202,7 +202,7 @@ public class SapAccountMapperTests
         link.Lookups.Should().NotBeNull();
         link.Lookups!.Should().ContainKey("primarycontactid");
 
-        var lookup = link.Lookups["primarycontactid"];
+        var lookup = link.Lookups!["primarycontactid"];
         lookup.EntityLogicalName.Should().Be("contact");
         lookup.KeyAttributes.Should().ContainKey("emailaddress1").WhoseValue.Should().Be("primary@example.com");
         lookup.CreateIfNotExists.Should().BeFalse();
@@ -272,5 +272,111 @@ public class SapAccountMapperTests
         var act = () => _sut.Map(request);
 
         act.Should().Throw<PayloadValidationException>();
+    }
+
+    [Fact]
+    public void Map_PrimaryContact_SetsPrimaryContactIndex()
+    {
+        var contacts = new List<SapContact>
+        {
+            MakeContact("a@example.com", "Alice", "Smith"),
+            MakeContact("primary@example.com", "Jane", "Doe", isPrimary: true)
+        };
+        var request = MakeRequest(contacts: contacts);
+
+        var result = _sut.Map(request);
+
+        result.PrimaryContactIndex.Should().Be(1);
+    }
+
+    [Fact]
+    public void Map_NoPrimaryContact_PrimaryContactIndexNull()
+    {
+        var contacts = new List<SapContact> { MakeContact() };
+        var request = MakeRequest(contacts: contacts);
+
+        var result = _sut.Map(request);
+
+        result.PrimaryContactIndex.Should().BeNull();
+    }
+
+    [Fact]
+    public void Map_NullContactElement_ThrowsValidationWithIndex()
+    {
+        var contacts = new List<SapContact> { MakeContact(), null! };
+        var request = MakeRequest(contacts: contacts);
+
+        var act = () => _sut.Map(request);
+
+        act.Should().Throw<PayloadValidationException>()
+            .Which.ValidationErrors.Should().Contain(e => e.Contains("Contacts[1]"));
+    }
+
+    [Fact]
+    public void Map_ContactWithEmptyEmail_ThrowsValidation()
+    {
+        var contacts = new List<SapContact> { MakeContact(email: "  ") };
+        var request = MakeRequest(contacts: contacts);
+
+        var act = () => _sut.Map(request);
+
+        act.Should().Throw<PayloadValidationException>()
+            .Which.ValidationErrors.Should().Contain(e => e.Contains("Email is required"));
+    }
+
+    [Fact]
+    public void Map_ContactWithEmptyLastName_ThrowsValidation()
+    {
+        var contacts = new List<SapContact> { MakeContact(lastName: "") };
+        var request = MakeRequest(contacts: contacts);
+
+        var act = () => _sut.Map(request);
+
+        act.Should().Throw<PayloadValidationException>()
+            .Which.ValidationErrors.Should().Contain(e => e.Contains("LastName is required"));
+    }
+
+    [Fact]
+    public void Map_DuplicateContactEmails_ThrowsValidation()
+    {
+        var contacts = new List<SapContact>
+        {
+            MakeContact("same@example.com", "Alice", "Smith"),
+            MakeContact("SAME@example.com", "Bob", "Jones")
+        };
+        var request = MakeRequest(contacts: contacts);
+
+        var act = () => _sut.Map(request);
+
+        act.Should().Throw<PayloadValidationException>()
+            .Which.ValidationErrors.Should().Contain(e => e.Contains("duplicate Email"));
+    }
+
+    [Fact]
+    public void Map_MultiplePrimaryContacts_ThrowsValidation()
+    {
+        var contacts = new List<SapContact>
+        {
+            MakeContact("a@example.com", "Alice", "Smith", isPrimary: true),
+            MakeContact("b@example.com", "Bob", "Jones", isPrimary: true)
+        };
+        var request = MakeRequest(contacts: contacts);
+
+        var act = () => _sut.Map(request);
+
+        act.Should().Throw<PayloadValidationException>()
+            .Which.ValidationErrors.Should().Contain(e => e.Contains("IsPrimary"));
+    }
+
+    [Fact]
+    public void Map_MultipleValidationProblems_AllReported()
+    {
+        var contacts = new List<SapContact> { MakeContact(email: "", firstName: "", lastName: "") };
+        var request = MakeRequest(accountNumber: "", contacts: contacts);
+
+        var act = () => _sut.Map(request);
+
+        act.Should().Throw<PayloadValidationException>()
+            .Which.ValidationErrors.Should().HaveCountGreaterOrEqualTo(4);
     }
 }

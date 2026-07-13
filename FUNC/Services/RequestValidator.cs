@@ -56,7 +56,7 @@ namespace enterprise_d365_gateway.Services
             _mapper.ValidatePayload(payload);
         }
 
-        private static void ValidateLookupsRecursive(
+        private void ValidateLookupsRecursive(
             IDictionary<string, LookupDefinition> lookups,
             List<string> errors,
             string path)
@@ -65,11 +65,29 @@ namespace enterprise_d365_gateway.Services
             {
                 var currentPath = $"{path}.{key}";
 
-                if (string.IsNullOrWhiteSpace(lookup.EntityLogicalName))
+                if (lookup == null)
+                {
+                    errors.Add($"{currentPath}: Lookup definition must not be null.");
+                    continue;
+                }
+
+                var hasEntity = !string.IsNullOrWhiteSpace(lookup.EntityLogicalName);
+                var hasKeys = lookup.KeyAttributes is { Count: > 0 };
+
+                if (!hasEntity)
                     errors.Add($"{currentPath}: EntityLogicalName is required.");
 
-                if (lookup.KeyAttributes == null || lookup.KeyAttributes.Count == 0)
+                if (!hasKeys)
                     errors.Add($"{currentPath}: KeyAttributes must contain at least one entry.");
+
+                // Entity + attribute names must exist in the early-bound model —
+                // otherwise a typo surfaces as an opaque Dataverse 500 instead of a 400.
+                if (hasEntity && hasKeys)
+                {
+                    var lookupErrors = _mapper.ValidateLookup(currentPath, lookup);
+                    if (lookupErrors is { Count: > 0 })
+                        errors.AddRange(lookupErrors);
+                }
 
                 if (lookup.NestedLookups != null && lookup.NestedLookups.Count > 0)
                     ValidateLookupsRecursive(lookup.NestedLookups, errors, currentPath);

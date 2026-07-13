@@ -1,7 +1,4 @@
-using Azure.Core;
-using Azure.Identity;
 using Microsoft.PowerPlatform.Dataverse.Client;
-using Microsoft.Xrm.Sdk;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using enterprise_d365_gateway.Interfaces;
@@ -32,54 +29,71 @@ namespace enterprise_d365_gateway.Services
 
         public async Task<IOrganizationServiceAsync2> GetOrCreateServiceAsync(CancellationToken cancellationToken = default)
         {
-            if (_serviceClient != null && _serviceClient.IsReady)
+            var existing = Volatile.Read(ref _serviceClient);
+            if (existing != null && existing.IsReady)
             {
-                return _serviceClient;
+                return existing;
             }
 
             await _clientLock.WaitAsync(cancellationToken);
             try
             {
-                if (_serviceClient != null && _serviceClient.IsReady)
+                existing = Volatile.Read(ref _serviceClient);
+                if (existing != null && existing.IsReady)
                 {
-                    return _serviceClient;
+                    return existing;
                 }
 
-                // refresh the cached token before re-creating client.
+                // Fail fast (honoring the caller's token) before building the client.
                 var token = await _tokenProvider.GetTokenAsync(_options.Url, cancellationToken);
                 _logger.LogDebug("Dataverse access token acquired. ExpiresOn={ExpiresOn}", token.ExpiresOn);
 
-                _serviceClient?.Dispose();
-
-                _serviceClient = new ServiceClient(new Uri(_options.Url), async (string resource) =>
+                // IMPORTANT: the token callback lives as long as the (process-wide)
+                // ServiceClient. It must NOT observe any request's cancellation
+                // token — a cancelled captured token would poison every future
+                // token refresh and take the client down until process restart.
+                var client = new ServiceClient(new Uri(_options.Url), async (string resource) =>
                 {
-                    var token = await _tokenProvider.GetTokenAsync(resource, cancellationToken);
-                    return token.Token;
+                    var refreshed = await _tokenProvider.GetTokenAsync(resource, CancellationToken.None);
+                    return refreshed.Token;
                 });
 
-                if (!_serviceClient.IsReady)
+                if (!client.IsReady)
                 {
-                    var lastError = string.IsNullOrWhiteSpace(_serviceClient.LastError)
+                    var lastError = string.IsNullOrWhiteSpace(client.LastError)
                         ? "ServiceClient initialization failed without LastError."
-                        : _serviceClient.LastError;
+                        : client.LastError;
 
                     _logger.LogError(
-                        _serviceClient.LastException,
+                        client.LastException,
                         "ServiceClient initialization failed. Url={DataverseUrl}. LastError={LastError}",
                         _options.Url,
                         lastError);
 
-                    throw new InvalidOperationException(
+                    var initException = new InvalidOperationException(
                         $"Failed to connect to Dataverse. {lastError}",
-                        _serviceClient.LastException);
+                        client.LastException);
+                    client.Dispose();
+                    throw initException;
                 }
 
-                if (!(_serviceClient is IOrganizationServiceAsync2))
+                // The gateway runs parallel batches against the shared client;
+                // pinning every call to one Dataverse front-end node via the
+                // affinity cookie caps throughput for no benefit here.
+                client.EnableAffinityCookie = false;
+
+                if (client is not IOrganizationServiceAsync2)
                 {
+                    client.Dispose();
                     throw new InvalidOperationException("Unable to create a Dataverse IOrganizationServiceAsync2 from ServiceClient.");
                 }
 
-                return _serviceClient;
+                // Deliberately do NOT dispose a previous (broken) client here:
+                // other threads may still hold a reference from the lock-free fast
+                // path. Reconnects are rare; the abandoned instance is reclaimed
+                // by the GC once those calls drain.
+                Volatile.Write(ref _serviceClient, client);
+                return client;
             }
             finally
             {
